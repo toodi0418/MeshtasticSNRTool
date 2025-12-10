@@ -1,7 +1,7 @@
 pub mod config;
-pub mod transport;
 pub mod engine;
+pub mod transport;
 
 pub use config::{Config, TransportMode};
-pub use transport::{Transport, IpTransport, SerialTransport};
 pub use engine::{Engine, ProgressState};
+pub use transport::{IpTransport, SerialTransport, Transport};

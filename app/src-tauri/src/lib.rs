@@ -10,12 +10,7 @@ struct AppState {
 #[tauri::command]
 fn get_serial_ports() -> Vec<String> {
     serialport::available_ports()
-        .map(|ports| {
-            ports
-                .into_iter()
-                .map(|p| p.port_name)
-                .collect()
-        })
+        .map(|ports| ports.into_iter().map(|p| p.port_name).collect())
         .unwrap_or_default()
 }
 
@@ -53,9 +48,12 @@ async fn start_test(
     let app_handle_clone = app_handle.clone();
 
     let handle = tokio::spawn(async move {
-        if let Err(e) = engine.run(move |progress| {
-            let _ = app_handle_clone.emit("test-progress", progress);
-        }).await {
+        if let Err(e) = engine
+            .run(move |progress| {
+                let _ = app_handle_clone.emit("test-progress", progress);
+            })
+            .await
+        {
             let _ = app_handle.emit("test-error", e.to_string());
         }
         let _ = app_handle.emit("test-complete", ());
