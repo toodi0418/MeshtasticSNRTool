@@ -1,0 +1,170 @@
+    Checking msnr-core v0.1.0 (/Users/toodi/Documents/MSNRTool/core)
+error[E0432]: unresolved import `meshtastic_protobufs::mesh_packet`
+ --> core/src/transport/ip.rs:6:27
+  |
+6 | use meshtastic_protobufs::mesh_packet::PayloadVariant;
+  |                           ^^^^^^^^^^^ could not find `mesh_packet` in `meshtastic_protobufs`
+
+error[E0432]: unresolved imports `meshtastic_protobufs::AdminMessage`, `meshtastic_protobufs::Config`, `meshtastic_protobufs::PortNum`, `meshtastic_protobufs::RouteDiscovery`
+ --> core/src/transport/ip.rs:7:28
+  |
+7 | use meshtastic_protobufs::{AdminMessage, Config, PortNum, RouteDiscovery};
+  |                            ^^^^^^^^^^^^  ^^^^^^  ^^^^^^^  ^^^^^^^^^^^^^^ no `RouteDiscovery` in the root
+  |                            |             |       |
+  |                            |             |       no `PortNum` in the root
+  |                            |             no `Config` in the root
+  |                            no `AdminMessage` in the root
+  |
+  = help: consider importing one of these structs instead:
+          meshtastic::protobufs::AdminMessage
+          meshtastic_protobufs::meshtastic::AdminMessage
+  = help: consider importing one of these items instead:
+          crate::Config
+          meshtastic::protobufs::Config
+          meshtastic::protobufs::from_radio::PayloadVariant::Config
+          meshtastic_protobufs::meshtastic::Config
+          meshtastic_protobufs::meshtastic::from_radio::PayloadVariant::Config
+  = help: consider importing one of these enums instead:
+          meshtastic::protobufs::PortNum
+          meshtastic_protobufs::meshtastic::PortNum
+  = help: consider importing one of these structs instead:
+          meshtastic::protobufs::RouteDiscovery
+          meshtastic_protobufs::meshtastic::RouteDiscovery
+
+error[E0432]: unresolved import `meshtastic_protobufs::mesh_packet`
+ --> core/src/transport/serial.rs:6:27
+  |
+6 | use meshtastic_protobufs::mesh_packet::PayloadVariant;
+  |                           ^^^^^^^^^^^ could not find `mesh_packet` in `meshtastic_protobufs`
+
+error[E0432]: unresolved imports `meshtastic_protobufs::AdminMessage`, `meshtastic_protobufs::Config`, `meshtastic_protobufs::PortNum`, `meshtastic_protobufs::RouteDiscovery`
+ --> core/src/transport/serial.rs:7:28
+  |
+7 | use meshtastic_protobufs::{AdminMessage, Config, PortNum, RouteDiscovery};
+  |                            ^^^^^^^^^^^^  ^^^^^^  ^^^^^^^  ^^^^^^^^^^^^^^ no `RouteDiscovery` in the root
+  |                            |             |       |
+  |                            |             |       no `PortNum` in the root
+  |                            |             no `Config` in the root
+  |                            no `AdminMessage` in the root
+  |
+  = help: consider importing one of these structs instead:
+          meshtastic::protobufs::AdminMessage
+          meshtastic_protobufs::meshtastic::AdminMessage
+  = help: consider importing one of these items instead:
+          crate::Config
+          meshtastic::protobufs::Config
+          meshtastic::protobufs::from_radio::PayloadVariant::Config
+          meshtastic_protobufs::meshtastic::Config
+          meshtastic_protobufs::meshtastic::from_radio::PayloadVariant::Config
+  = help: consider importing one of these enums instead:
+          meshtastic::protobufs::PortNum
+          meshtastic_protobufs::meshtastic::PortNum
+  = help: consider importing one of these structs instead:
+          meshtastic::protobufs::RouteDiscovery
+          meshtastic_protobufs::meshtastic::RouteDiscovery
+
+warning: unused import: `meshtastic::utils`
+ --> core/src/transport/ip.rs:5:5
+  |
+5 | use meshtastic::utils;
+  |     ^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `meshtastic::utils`
+ --> core/src/transport/serial.rs:5:5
+  |
+5 | use meshtastic::utils;
+  |     ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `prost::Message`
+ --> core/src/transport/serial.rs:8:5
+  |
+8 | use prost::Message;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused imports: `DirectTestMode`, `RelayTestMode`, and `TestMode`
+ --> core/src/engine.rs:1:29
+  |
+1 | use crate::config::{Config, TestMode, RelayTestMode, DirectTestMode};
+  |                             ^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^
+
+error[E0061]: this function takes 0 arguments but 1 argument was supplied
+   --> core/src/transport/ip.rs:36:32
+    |
+ 36 |         self.stream_api = Some(StreamApi::new(stream));
+    |                                ^^^^^^^^^^^^^^ ------ unexpected argument of type `tokio::net::TcpStream`
+    |
+note: associated function defined here
+   --> /Users/toodi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/meshtastic-0.1.8/src/connections/stream_api.rs:381:12
+    |
+381 |     pub fn new() -> StreamApi {
+    |            ^^^
+help: remove the extra argument
+    |
+ 36 -         self.stream_api = Some(StreamApi::new(stream));
+ 36 +         self.stream_api = Some(StreamApi::new());
+    |
+
+error[E0599]: no method named `open_native_async` found for struct `SerialPortBuilder` in the current scope
+  --> core/src/transport/serial.rs:35:14
+   |
+34 |           let port = tokio_serial::new(&self.port_name, self.baud_rate)
+   |  ____________________-
+35 | |             .open_native_async()?;
+   | |_____________-^^^^^^^^^^^^^^^^^
+   |
+   = help: items from traits can only be used if the trait is in scope
+help: the following traits which provide `open_native_async` are implemented but not in scope; perhaps you want to import one of them
+   |
+ 1 + use mio_serial::SerialPortBuilderExt;
+   |
+ 1 + use tokio_serial::SerialPortBuilderExt;
+   |
+help: there is a method `open_native` with a similar name
+   |
+35 -             .open_native_async()?;
+35 +             .open_native()?;
+   |
+
+error[E0061]: this function takes 0 arguments but 1 argument was supplied
+   --> core/src/transport/serial.rs:37:32
+    |
+ 37 |         self.stream_api = Some(StreamApi::new(port));
+    |                                ^^^^^^^^^^^^^^ ---- unexpected argument
+    |
+note: associated function defined here
+   --> /Users/toodi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/meshtastic-0.1.8/src/connections/stream_api.rs:381:12
+    |
+381 |     pub fn new() -> StreamApi {
+    |            ^^^
+help: remove the extra argument
+    |
+ 37 -         self.stream_api = Some(StreamApi::new(port));
+ 37 +         self.stream_api = Some(StreamApi::new());
+    |
+
+warning: unused variable: `api`
+  --> core/src/transport/ip.rs:48:21
+   |
+48 |         if let Some(api) = &mut self.stream_api {
+   |                     ^^^ help: if this is intentional, prefix it with an underscore: `_api`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `api`
+  --> core/src/transport/serial.rs:48:21
+   |
+48 |         if let Some(api) = &mut self.stream_api {
+   |                     ^^^ help: if this is intentional, prefix it with an underscore: `_api`
+
+warning: unused variable: `api`
+  --> core/src/transport/serial.rs:58:21
+   |
+58 |         if let Some(api) = &mut self.stream_api {
+   |                     ^^^ help: if this is intentional, prefix it with an underscore: `_api`
+
+Some errors have detailed explanations: E0061, E0432, E0599.
+For more information about an error, try `rustc --explain E0061`.
+warning: `msnr-core` (lib) generated 7 warnings
+error: could not compile `msnr-core` (lib) due to 7 previous errors; 7 warnings emitted
