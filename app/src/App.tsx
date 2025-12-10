@@ -1,50 +1,78 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useState, useEffect } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import './App.css';
+import { ConfigForm } from './components/ConfigForm';
+import { Dashboard } from './components/Dashboard';
+import { Config, ProgressState } from './types';
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const [config, setConfig] = useState<Config>({
+    transport_mode: 'Ip',
+    ip: '127.0.0.1',
+    port: 4403,
+    topology: 'Relay',
+    test_mode: { Relay: 'RoofOnly' },
+    interval_ms: 1000,
+    phase_duration_ms: 60000,
+    cycles: 2,
+    output_path: 'results.csv',
+    output_format: 'Csv'
+  });
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  const [isRunning, setIsRunning] = useState(false);
+  const [progress, setProgress] = useState<ProgressState | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
+
+  useEffect(() => {
+    const unlisten = listen<ProgressState>('test-progress', (event) => {
+      setProgress(event.payload);
+      setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${event.payload.status_message}`].slice(-100));
+    });
+
+    const unlistenComplete = listen('test-complete', () => {
+      setIsRunning(false);
+      setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Test Completed`]);
+    });
+
+    return () => {
+      unlisten.then(f => f());
+      unlistenComplete.then(f => f());
+    };
+  }, []);
+
+  const handleStart = async () => {
+    try {
+      await invoke('start_test', { config });
+      setIsRunning(true);
+      setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Test Started`]);
+    } catch (e) {
+      console.error(e);
+      setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error: ${e}`]);
+    }
+  };
+
+  const handleStop = async () => {
+    try {
+      await invoke('stop_test');
+      setIsRunning(false);
+      setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Test Stopped`]);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <div className="app-container">
+      <ConfigForm
+        config={config}
+        setConfig={setConfig}
+        isRunning={isRunning}
+        onStart={handleStart}
+        onStop={handleStop}
+      />
+      <Dashboard progress={progress} logs={logs} />
+    </div>
   );
 }
 
