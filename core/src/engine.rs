@@ -80,6 +80,13 @@ impl PhaseStats {
     }
 }
 
+#[derive(Debug)]
+enum RouteValidationOutcome {
+    ExactThreeHop,
+    RoofOnly,
+    ContainsRoof,
+}
+
 pub struct Engine {
     config: Config,
     transport: Box<dyn Transport>,
@@ -610,21 +617,44 @@ impl Engine {
                                                         }
                                                     };
 
-                                                    if let Err(reason) = Self::validate_relay_route(&route_discovery.route, local_id, roof_id, mountain_id) {
-                                                        println!(
-                                                            "❌ VALIDATION FAIL: {} | Route {:?}",
-                                                            reason,
-                                                            route_discovery.route
-                                                        );
-                                                        continue;
+                                                    match Self::validate_relay_route(
+                                                        &route_discovery.route,
+                                                        &route_discovery.route_back,
+                                                        local_id,
+                                                        roof_id,
+                                                        mountain_id,
+                                                    ) {
+                                                        Ok(RouteValidationOutcome::ExactThreeHop) => {
+                                                            println!(
+                                                                "✅ VALIDATION PASS: Route matches Local({}) -> Roof({}) -> Mountain({})",
+                                                                Self::format_node_id(local_id),
+                                                                Self::format_node_id(Some(roof_id)),
+                                                                Self::format_node_id(Some(mountain_id))
+                                                            );
+                                                        }
+                                                        Ok(RouteValidationOutcome::RoofOnly) => {
+                                                            println!(
+                                                                "✅ VALIDATION PASS: Route reports single-hop via Roof({}), Meshtastic treated this relay as 1 hop.",
+                                                                Self::format_node_id(Some(roof_id))
+                                                            );
+                                                        }
+                                                        Ok(RouteValidationOutcome::ContainsRoof) => {
+                                                            println!(
+                                                                "✅ VALIDATION PASS: Route metadata contains Roof({}); length = {}, continuing.",
+                                                                Self::format_node_id(Some(roof_id)),
+                                                                route_discovery.route.len()
+                                                            );
+                                                        }
+                                                        Err(reason) => {
+                                                            println!(
+                                                                "❌ VALIDATION FAIL: {} | Route {:?} | RouteBack {:?}",
+                                                                reason,
+                                                                route_discovery.route,
+                                                                route_discovery.route_back
+                                                            );
+                                                            continue;
+                                                        }
                                                     }
-
-                                                    println!(
-                                                        "✅ VALIDATION PASS: Route matches Local({}) -> Roof({}) -> Mountain({})",
-                                                        Self::format_node_id(local_id),
-                                                        Self::format_node_id(Some(roof_id)),
-                                                        Self::format_node_id(Some(mountain_id))
-                                                    );
                                                 }
 
                                                 if is_lna_on {
@@ -769,44 +799,66 @@ impl Engine {
 
     fn validate_relay_route(
         route: &[u32],
+        route_back: &[u32],
         local_id: Option<u32>,
         roof_id: u32,
         mountain_id: u32,
-    ) -> Result<(), String> {
-        if route.len() != 3 {
+    ) -> Result<RouteValidationOutcome, String> {
+        if route.is_empty() && route_back.is_empty() {
+            return Err("route metadata is empty".to_string());
+        }
+
+        let roof_seen = route.contains(&roof_id) || route_back.contains(&roof_id);
+        if !roof_seen {
             return Err(format!(
-                "expected exactly 3 nodes (Local -> Roof -> Mountain) but received {}",
-                route.len()
+                "route metadata missing configured Roof ({})",
+                Self::format_node_id(Some(roof_id))
             ));
+        }
+
+        let mountain_seen = route.contains(&mountain_id) || route_back.contains(&mountain_id);
+        if !mountain_seen {
+            println!(
+                "⚠️ VALIDATION WARNING: Mountain node ({}) not explicitly present in traceroute metadata; assuming destination matches request.",
+                Self::format_node_id(Some(mountain_id))
+            );
         }
 
         if let Some(local_val) = local_id {
-            if route[0] != local_val {
-                return Err(format!(
-                    "route start {:08x} does not match Local {:08x}",
-                    route[0],
-                    local_val
-                ));
+            let local_seen = route
+                .first()
+                .map(|v| *v == local_val)
+                .unwrap_or(false)
+                || route
+                    .contains(&local_val)
+                || route_back
+                    .contains(&local_val)
+                || route_back
+                    .last()
+                    .map(|v| *v == local_val)
+                    .unwrap_or(false);
+
+            if !local_seen {
+                println!(
+                    "⚠️ VALIDATION WARNING: Local node ({}) not reported in traceroute metadata; continuing.",
+                    Self::format_node_id(Some(local_val))
+                );
             }
         }
 
-        if route[1] != roof_id {
-            return Err(format!(
-                "route hop[1] {:08x} does not match Roof {:08x}",
-                route[1],
-                roof_id
-            ));
+        if route.len() >= 3 {
+            let last_idx = route.len() - 1;
+            let local_ok = local_id.map(|val| route[0] == val).unwrap_or(true);
+            if local_ok && route[1] == roof_id && route[last_idx] == mountain_id {
+                return Ok(RouteValidationOutcome::ExactThreeHop);
+            }
         }
 
-        if route[2] != mountain_id {
-            return Err(format!(
-                "route destination {:08x} does not match Mountain {:08x}",
-                route[2],
-                mountain_id
-            ));
+        if route.len() == 1 && route[0] == roof_id {
+            return Ok(RouteValidationOutcome::RoofOnly);
         }
 
-        Ok(())
+        Ok(RouteValidationOutcome::ContainsRoof)
     }
 
     fn parse_configured_node_u32(node_id: &Option<String>) -> Option<u32> {

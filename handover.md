@@ -133,5 +133,5 @@ npm run tauri dev
 ## 6. Recent Updates
 - 2025-12-11：GUI Dashboard 的「LNA 平均值比較」卡片僅在整個測試完全結束且 ON/OFF 都累積到樣本後才會顯示，避免測試進行中佔版面。
 - 2025-12-11：移除 Engine 層級的 `Sending traceroute` log，僅保留 transport 端輸出，避免 CLI 出現兩行重複訊息。
-- 2025-12-11：Relay 模式新增路徑驗證，僅接受 Local → Roof → Mountain 共三節點的樣本；路徑若多/少 hop 或未設定必填 Node ID 會直接丟棄資料，確保 SNR 平均值不被錯誤拓撲污染。
+- 2025-12-11：Relay 模式路徑驗證會允許 Meshtastic 報回的「單跳 Roof」路徑，只要 route metadata 內包含 Roof ID 即視為有效，同時仍支援完整 Local → Roof → Mountain 的嚴格比對；缺漏 Mountain/Local 會給出警告但不會阻擋樣本。
 - 2025-12-11：預設採樣參數改為 Interval 30 秒、Phase 7.5 分鐘（單一 Cycle 約 15 分鐘），確保每輪能累積足夠樣本但仍維持總測試時間可控。
