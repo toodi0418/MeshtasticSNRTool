@@ -129,3 +129,6 @@ npm run tauri dev
 - [ ] **Serial Transport**: Finish implementing `send_admin` for USB Serial.
 - [ ] **Map View**: Show traceroute hops on a map.
 - [ ] 更進階的平均統計（例如 RSSI、標準差），以及在 GUI/CSV 中匯出。
+
+## 6. Recent Updates
+- 2025-12-11：GUI Dashboard 的「LNA 平均值比較」卡片僅在整個測試完全結束且 ON/OFF 都累積到樣本後才會顯示，避免測試進行中佔版面。

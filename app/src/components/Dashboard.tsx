@@ -55,6 +55,10 @@ export const Dashboard: React.FC<Props> = ({ progress, logs, resetToken }) => {
         hasValue(averages?.lna_on_mtn_to_roof) && hasValue(averages?.lna_off_mtn_to_roof)
             ? averages!.lna_on_mtn_to_roof! - averages!.lna_off_mtn_to_roof!
             : undefined;
+    const showAverageStats =
+        progress.phase === 'Done' &&
+        (averages?.lna_off_samples ?? 0) > 0 &&
+        (averages?.lna_on_samples ?? 0) > 0;
 
     return (
         <div className="dashboard-container">
@@ -95,28 +99,30 @@ export const Dashboard: React.FC<Props> = ({ progress, logs, resetToken }) => {
             </div>
 
             {/* Averages Section */}
-            <div className="chart-section glass">
-                <div className="section-header">
-                    <h3>LNA 平均值比較</h3>
+            {showAverageStats && (
+                <div className="chart-section glass">
+                    <div className="section-header">
+                        <h3>LNA 平均值比較</h3>
+                    </div>
+                    <div className="avg-grid">
+                        <div className="avg-card">
+                            <h4>LNA OFF（{averages?.lna_off_samples ?? 0} 筆）</h4>
+                            <div>Roof → Mtn: {formatDb(averages?.lna_off_roof_to_mtn)}</div>
+                            <div>Mtn → Roof: {formatDb(averages?.lna_off_mtn_to_roof)}</div>
+                        </div>
+                        <div className="avg-card">
+                            <h4>LNA ON（{averages?.lna_on_samples ?? 0} 筆）</h4>
+                            <div>Roof → Mtn: {formatDb(averages?.lna_on_roof_to_mtn)}</div>
+                            <div>Mtn → Roof: {formatDb(averages?.lna_on_mtn_to_roof)}</div>
+                        </div>
+                        <div className="avg-card">
+                            <h4>差值 (ON - OFF)</h4>
+                            <div>Roof → Mtn: {formatDb(roofDelta)}</div>
+                            <div>Mtn → Roof: {formatDb(mtnDelta)}</div>
+                        </div>
+                    </div>
                 </div>
-                <div className="avg-grid">
-                    <div className="avg-card">
-                        <h4>LNA OFF（{averages?.lna_off_samples ?? 0} 筆）</h4>
-                        <div>Roof → Mtn: {formatDb(averages?.lna_off_roof_to_mtn)}</div>
-                        <div>Mtn → Roof: {formatDb(averages?.lna_off_mtn_to_roof)}</div>
-                    </div>
-                    <div className="avg-card">
-                        <h4>LNA ON（{averages?.lna_on_samples ?? 0} 筆）</h4>
-                        <div>Roof → Mtn: {formatDb(averages?.lna_on_roof_to_mtn)}</div>
-                        <div>Mtn → Roof: {formatDb(averages?.lna_on_mtn_to_roof)}</div>
-                    </div>
-                    <div className="avg-card">
-                        <h4>差值 (ON - OFF)</h4>
-                        <div>Roof → Mtn: {formatDb(roofDelta)}</div>
-                        <div>Mtn → Roof: {formatDb(mtnDelta)}</div>
-                    </div>
-                </div>
-            </div>
+            )}
 
             {/* Logs Section */}
             <div className="logs-section glass">
