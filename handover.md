@@ -132,3 +132,4 @@ npm run tauri dev
 
 ## 6. Recent Updates
 - 2025-12-11：GUI Dashboard 的「LNA 平均值比較」卡片僅在整個測試完全結束且 ON/OFF 都累積到樣本後才會顯示，避免測試進行中佔版面。
+- 2025-12-11：移除 Engine 層級的 `Sending traceroute` log，僅保留 transport 端輸出，避免 CLI 出現兩行重複訊息。

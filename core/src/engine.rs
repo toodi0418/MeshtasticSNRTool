@@ -551,9 +551,6 @@ impl Engine {
                          }.unwrap_or_default();
 
                          if !target.is_empty() {
-                             println!("Sending traceroute to {}", target);
-                             use std::io::Write;
-                             let _ = std::io::stdout().flush();
                              if let Err(e) = self.transport.run_traceroute(&target).await {
                                  println!("Error sending traceroute: {}", e);
                              }
