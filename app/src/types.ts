@@ -10,6 +10,10 @@ export interface Config {
     cycles: number;
     output_path: string;
     output_format: 'Csv' | 'Json';
+    target_node_id?: string;
+    local_node_id?: string;
+    roof_node_id?: string;
+    mountain_node_id?: string;
 }
 
 export interface ProgressState {
@@ -17,4 +21,7 @@ export interface ProgressState {
     current_round_progress: number;
     status_message: string;
     eta_seconds: number;
+    snr_towards?: number[];
+    snr_back?: number[];
+    phase?: string;
 }

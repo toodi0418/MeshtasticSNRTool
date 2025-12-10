@@ -9,15 +9,18 @@ import { Config, ProgressState } from './types';
 function App() {
   const [config, setConfig] = useState<Config>({
     transport_mode: 'Ip',
-    ip: '127.0.0.1',
+    ip: '172.16.8.92',
     port: 4403,
     topology: 'Relay',
     test_mode: { Relay: 'RoofOnly' },
-    interval_ms: 1000,
-    phase_duration_ms: 60000,
+    interval_ms: 45000,
+    phase_duration_ms: 300000,
     cycles: 2,
     output_path: 'results.csv',
-    output_format: 'Csv'
+    output_format: 'Csv',
+    roof_node_id: '!867263da',
+    mountain_node_id: '!550d885b',
+    target_node_id: '' // User can fill this
   });
 
   const [isRunning, setIsRunning] = useState(false);
@@ -35,9 +38,14 @@ function App() {
       setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Test Completed`]);
     });
 
+    const unlistenError = listen<string>('test-error', (event) => {
+      setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error: ${event.payload}`]);
+    });
+
     return () => {
       unlisten.then(f => f());
       unlistenComplete.then(f => f());
+      unlistenError.then(f => f());
     };
   }, []);
 

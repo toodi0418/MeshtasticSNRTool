@@ -26,9 +26,12 @@ async fn start_test(
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let mut handle_guard = state.engine_handle.lock().await;
-    
-    if handle_guard.is_some() {
-        return Err("Test already running".to_string());
+
+    // Check if there is an active handle
+    if let Some(handle) = handle_guard.as_ref() {
+        if !handle.is_finished() {
+            return Err("Test already running".to_string());
+        }
     }
 
     let transport_impl: Box<dyn Transport> = match config.transport_mode {
@@ -50,9 +53,11 @@ async fn start_test(
     let app_handle_clone = app_handle.clone();
 
     let handle = tokio::spawn(async move {
-        let _ = engine.run(move |progress| {
+        if let Err(e) = engine.run(move |progress| {
             let _ = app_handle_clone.emit("test-progress", progress);
-        }).await;
+        }).await {
+            let _ = app_handle.emit("test-error", e.to_string());
+        }
         let _ = app_handle.emit("test-complete", ());
     });
 

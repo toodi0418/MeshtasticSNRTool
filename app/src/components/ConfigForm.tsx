@@ -22,7 +22,7 @@ export const ConfigForm: React.FC<Props> = ({ config, setConfig, isRunning, onSt
     };
 
     return (
-        <div className="glass-panel sidebar">
+        <div className="glass sidebar">
             <h2>Configuration</h2>
 
             <div className="form-group">
@@ -93,6 +93,44 @@ export const ConfigForm: React.FC<Props> = ({ config, setConfig, isRunning, onSt
                     disabled={isRunning}
                 />
             </div>
+
+            {config.topology === 'Relay' && (
+                <>
+                    <div className="form-group">
+                        <label>Roof Node ID (Relay 1)</label>
+                        <input
+                            type="text"
+                            value={config.roof_node_id || ''}
+                            onChange={(e) => handleChange('roof_node_id', e.target.value)}
+                            placeholder="e.g. !867263da"
+                            disabled={isRunning}
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label>Mountain Node ID (Relay 2)</label>
+                        <input
+                            type="text"
+                            value={config.mountain_node_id || ''}
+                            onChange={(e) => handleChange('mountain_node_id', e.target.value)}
+                            placeholder="e.g. !550d885b"
+                            disabled={isRunning}
+                        />
+                    </div>
+                </>
+            )}
+
+            {config.topology === 'Direct' && (
+                <div className="form-group">
+                    <label>Target Node ID</label>
+                    <input
+                        type="text"
+                        value={config.target_node_id || ''}
+                        onChange={(e) => handleChange('target_node_id', e.target.value)}
+                        placeholder="e.g. !12345678"
+                        disabled={isRunning}
+                    />
+                </div>
+            )}
 
             <button onClick={isRunning ? onStop : onStart} disabled={false}>
                 {isRunning ? 'Stop Test' : 'Start Test'}
