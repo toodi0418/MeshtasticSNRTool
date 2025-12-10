@@ -846,6 +846,19 @@ impl Engine {
             }
         }
 
+        if route.len() == 1 {
+            let hop = route[0];
+            if hop == roof_id {
+                return Ok(RouteValidationOutcome::RoofOnly);
+            } else {
+                return Err(format!(
+                    "single-hop route {:08x} does not match Roof {:08x}",
+                    hop,
+                    roof_id
+                ));
+            }
+        }
+
         if route.len() >= 3 {
             let last_idx = route.len() - 1;
             let local_ok = local_id.map(|val| route[0] == val).unwrap_or(true);
@@ -854,8 +867,11 @@ impl Engine {
             }
         }
 
-        if route.len() == 1 && route[0] == roof_id {
-            return Ok(RouteValidationOutcome::RoofOnly);
+        if route.len() == 2 {
+            return Err(format!(
+                "unexpected two-hop route {:?}; expected single-hop via Roof or full three-hop path",
+                route
+            ));
         }
 
         Ok(RouteValidationOutcome::ContainsRoof)
