@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use msnr_core::{Config, Engine, IpTransport, SerialTransport, Transport, TransportMode};
 
-
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -48,7 +47,7 @@ enum Commands {
         topology: String,
 
         /// Phase Duration in seconds
-        #[arg(long, default_value_t = 300)]
+        #[arg(long, default_value_t = 600)]
         duration: u64,
 
         /// Number of Cycles
@@ -67,13 +66,25 @@ async fn main() -> Result<()> {
     eprintln!("CLI parsed successfully.");
 
     match &cli.command {
-        Some(Commands::Run { transport, ip, port, serial, target, roof, mountain, topology, duration, cycles, interval }) => {
+        Some(Commands::Run {
+            transport,
+            ip,
+            port,
+            serial,
+            target,
+            roof,
+            mountain,
+            topology,
+            duration,
+            cycles,
+            interval,
+        }) => {
             println!("Starting MSNR Tool CLI...");
             use std::io::Write;
             let _ = std::io::stdout().flush();
 
             let mut config = Config::default();
-            
+
             // Set Test Parameters
             config.phase_duration_ms = duration * 1000;
             config.cycles = *cycles;
@@ -111,17 +122,20 @@ async fn main() -> Result<()> {
 
             let mut engine = Engine::new(config, transport_impl);
 
-            engine.run(|progress| {
-                // Print progress
-                println!("[{}] {:.1}% | {}", 
-                    progress_bar(progress.total_progress), 
-                    progress.total_progress * 100.0,
-                    progress.status_message
-                );
-                use std::io::Write;
-                std::io::stdout().flush().unwrap();
-            }).await?;
-            
+            engine
+                .run(|progress| {
+                    // Print progress
+                    println!(
+                        "[{}] {:.1}% | {}",
+                        progress_bar(progress.total_progress),
+                        progress.total_progress * 100.0,
+                        progress.status_message
+                    );
+                    use std::io::Write;
+                    std::io::stdout().flush().unwrap();
+                })
+                .await?;
+
             println!("\nTest completed!");
         }
         None => {

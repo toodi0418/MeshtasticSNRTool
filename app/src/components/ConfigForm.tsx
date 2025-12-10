@@ -21,6 +21,19 @@ export const ConfigForm: React.FC<Props> = ({ config, setConfig, isRunning, onSt
         setConfig({ ...config, [field]: value });
     };
 
+    const intervalSeconds = Math.round((config.interval_ms || 0) / 1000);
+    const phaseSeconds = Math.round((config.phase_duration_ms || 0) / 1000);
+
+    const handleIntervalSecondsChange = (value: number) => {
+        const sanitized = Math.max(0, value);
+        setConfig({ ...config, interval_ms: sanitized * 1000 });
+    };
+
+    const handlePhaseSecondsChange = (value: number) => {
+        const sanitized = Math.max(0, value);
+        setConfig({ ...config, phase_duration_ms: sanitized * 1000 });
+    };
+
     return (
         <div className="glass sidebar">
             <h2>Configuration</h2>
@@ -85,11 +98,23 @@ export const ConfigForm: React.FC<Props> = ({ config, setConfig, isRunning, onSt
             </div>
 
             <div className="form-group">
-                <label>Interval (ms)</label>
+                <label>Interval (秒)</label>
                 <input
                     type="number"
-                    value={config.interval_ms}
-                    onChange={(e) => handleChange('interval_ms', parseInt(e.target.value))}
+                    value={intervalSeconds}
+                    min={0}
+                    onChange={(e) => handleIntervalSecondsChange(parseInt(e.target.value) || 0)}
+                    disabled={isRunning}
+                />
+            </div>
+
+            <div className="form-group">
+                <label>Cycle 時間 (秒)</label>
+                <input
+                    type="number"
+                    value={phaseSeconds}
+                    min={0}
+                    onChange={(e) => handlePhaseSecondsChange(parseInt(e.target.value) || 0)}
                     disabled={isRunning}
                 />
             </div>

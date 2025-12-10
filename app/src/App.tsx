@@ -6,7 +6,19 @@ import { ConfigForm } from './components/ConfigForm';
 import { Dashboard } from './components/Dashboard';
 import { Config, ProgressState } from './types';
 
+const createEmptyProgress = (): ProgressState => ({
+  total_progress: 0,
+  current_round_progress: 0,
+  status_message: 'Idle',
+  eta_seconds: 0,
+  snr_towards: undefined,
+  snr_back: undefined,
+  phase: 'Idle',
+  average_stats: undefined,
+});
+
 function App() {
+
   const [config, setConfig] = useState<Config>({
     transport_mode: 'Ip',
     ip: '172.16.8.92',
@@ -14,7 +26,7 @@ function App() {
     topology: 'Relay',
     test_mode: { Relay: 'RoofOnly' },
     interval_ms: 45000,
-    phase_duration_ms: 300000,
+    phase_duration_ms: 600000,
     cycles: 2,
     output_path: 'results.csv',
     output_format: 'Csv',
@@ -24,8 +36,10 @@ function App() {
   });
 
   const [isRunning, setIsRunning] = useState(false);
-  const [progress, setProgress] = useState<ProgressState | null>(null);
+  const [progress, setProgress] = useState<ProgressState>(() => createEmptyProgress());
   const [logs, setLogs] = useState<string[]>([]);
+  const [resetToken, setResetToken] = useState(0);
+  const resetProgress = () => setProgress(createEmptyProgress());
 
   useEffect(() => {
     const unlisten = listen<ProgressState>('test-progress', (event) => {
@@ -51,6 +65,8 @@ function App() {
 
   const handleStart = async () => {
     try {
+      setResetToken((token) => token + 1);
+      resetProgress();
       await invoke('start_test', { config });
       setIsRunning(true);
       setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Test Started`]);
@@ -79,7 +95,7 @@ function App() {
         onStart={handleStart}
         onStop={handleStop}
       />
-      <Dashboard progress={progress} logs={logs} />
+      <Dashboard progress={progress} logs={logs} resetToken={resetToken} />
     </div>
   );
 }

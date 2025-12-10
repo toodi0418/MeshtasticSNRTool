@@ -4,32 +4,57 @@ import { SignalChart, SignalData } from './SignalChart';
 import { Activity, Clock, Terminal } from 'lucide-react';
 
 interface Props {
-    progress: ProgressState | null;
+    progress: ProgressState;
     logs: string[];
+    resetToken: number;
 }
 
-export const Dashboard: React.FC<Props> = ({ progress, logs }) => {
+export const Dashboard: React.FC<Props> = ({ progress, logs, resetToken }) => {
     const [history, setHistory] = useState<SignalData[]>([]);
 
     useEffect(() => {
-        if (progress?.snr_towards && progress?.snr_back) {
+        const snrTowards = progress.snr_towards;
+        const snrBack = progress.snr_back;
+        if (snrTowards && snrBack) {
             setHistory(prev => [
                 ...prev,
                 {
                     time: new Date().toLocaleTimeString('en-US', { hour12: false }),
-                    snr_towards: progress.snr_towards![1] ?? 0, // Roof -> Mtn
-                    snr_back: progress.snr_back![0] ?? 0,    // Mtn -> Roof
+                    snr_towards: snrTowards[1] ?? 0, // Roof -> Mtn
+                    snr_back: snrBack[0] ?? 0,    // Mtn -> Roof
                     phase: progress.phase || 'Unknown'
                 }
             ].slice(-50));
         }
     }, [progress]);
 
+    useEffect(() => {
+        setHistory([]);
+    }, [resetToken]);
+
     const formatTime = (secs: number) => {
         const m = Math.floor(secs / 60);
         const s = secs % 60;
         return `${m}m ${s.toString().padStart(2, '0')}s`;
     };
+
+    const hasValue = (val: number | null | undefined): val is number =>
+        val !== undefined && val !== null && !Number.isNaN(val);
+
+    const formatDb = (val?: number | null) => {
+        if (!hasValue(val)) return '--';
+        return `${val.toFixed(2)} dB`;
+    };
+
+    const averages = progress.average_stats;
+    const roofDelta =
+        hasValue(averages?.lna_on_roof_to_mtn) && hasValue(averages?.lna_off_roof_to_mtn)
+            ? averages!.lna_on_roof_to_mtn! - averages!.lna_off_roof_to_mtn!
+            : undefined;
+    const mtnDelta =
+        hasValue(averages?.lna_on_mtn_to_roof) && hasValue(averages?.lna_off_mtn_to_roof)
+            ? averages!.lna_on_mtn_to_roof! - averages!.lna_off_mtn_to_roof!
+            : undefined;
 
     return (
         <div className="dashboard-container">
@@ -39,8 +64,8 @@ export const Dashboard: React.FC<Props> = ({ progress, logs }) => {
                     <div className="stat-icon"><Activity size={24} color="#3b82f6" /></div>
                     <div className="stat-content">
                         <label>Current Phase</label>
-                        <div className="value highlight">{progress?.phase || 'Idle'}</div>
-                        <div className="sub-value">{progress?.status_message || 'Waiting to start...'}</div>
+                        <div className="value highlight">{progress.phase || 'Idle'}</div>
+                        <div className="sub-value">{progress.status_message || 'Waiting to start...'}</div>
                     </div>
                 </div>
 
@@ -48,16 +73,14 @@ export const Dashboard: React.FC<Props> = ({ progress, logs }) => {
                     <div className="stat-icon"><Clock size={24} color="#10b981" /></div>
                     <div className="stat-content">
                         <label>Total Time Remaining</label>
-                        <div className="value">{progress ? formatTime(progress.eta_seconds) : '--:--'}</div>
+                        <div className="value">{formatTime(progress.eta_seconds)}</div>
                         <div className="sub-value">
-                            Progress: {progress ? Math.round(progress.total_progress * 100) : 0}%
+                            Progress: {Math.round(progress.total_progress * 100)}%
                         </div>
                     </div>
-                    {progress && (
-                        <div className="mini-progress-bar">
-                            <div className="fill" style={{ width: `${progress.total_progress * 100}%` }}></div>
-                        </div>
-                    )}
+                    <div className="mini-progress-bar">
+                        <div className="fill" style={{ width: `${Math.min(progress.total_progress, 1) * 100}%` }}></div>
+                    </div>
                 </div>
             </div>
 
@@ -68,6 +91,30 @@ export const Dashboard: React.FC<Props> = ({ progress, logs }) => {
                 </div>
                 <div className="chart-wrapper">
                     <SignalChart data={history} />
+                </div>
+            </div>
+
+            {/* Averages Section */}
+            <div className="chart-section glass">
+                <div className="section-header">
+                    <h3>LNA 平均值比較</h3>
+                </div>
+                <div className="avg-grid">
+                    <div className="avg-card">
+                        <h4>LNA OFF（{averages?.lna_off_samples ?? 0} 筆）</h4>
+                        <div>Roof → Mtn: {formatDb(averages?.lna_off_roof_to_mtn)}</div>
+                        <div>Mtn → Roof: {formatDb(averages?.lna_off_mtn_to_roof)}</div>
+                    </div>
+                    <div className="avg-card">
+                        <h4>LNA ON（{averages?.lna_on_samples ?? 0} 筆）</h4>
+                        <div>Roof → Mtn: {formatDb(averages?.lna_on_roof_to_mtn)}</div>
+                        <div>Mtn → Roof: {formatDb(averages?.lna_on_mtn_to_roof)}</div>
+                    </div>
+                    <div className="avg-card">
+                        <h4>差值 (ON - OFF)</h4>
+                        <div>Roof → Mtn: {formatDb(roofDelta)}</div>
+                        <div>Mtn → Roof: {formatDb(mtnDelta)}</div>
+                    </div>
                 </div>
             </div>
 

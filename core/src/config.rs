@@ -78,7 +78,7 @@ impl Default for Config {
             topology: Topology::Relay,
             test_mode: TestMode::Relay(RelayTestMode::RoofOnly),
             interval_ms: 45000,
-            phase_duration_ms: 300000, // Increased to accommodate longer interval
+            phase_duration_ms: 600000, // Default 10 minutes per phase
             cycles: 2,
             scan_duration_ms: None,
             local_node_id: None,

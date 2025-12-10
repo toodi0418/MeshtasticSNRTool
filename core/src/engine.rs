@@ -1,13 +1,11 @@
-use crate::config::{Config, TestMode, RelayTestMode, DirectTestMode};
+use crate::config::Config;
 use crate::transport::Transport;
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use std::time::{Duration, Instant};
-use tokio::time::sleep;
-use meshtastic::protobufs::{
-    AdminMessage, admin_message, Config as MeshConfig, config, PortNum,
-};
-use prost::Message; // For encoding/decoding
+use meshtastic::protobufs::{AdminMessage, Config as MeshConfig, PortNum, admin_message, config};
+use prost::Message;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::time::{Duration, Instant}; // For encoding/decoding
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressState {
@@ -18,16 +16,87 @@ pub struct ProgressState {
     pub snr_towards: Option<Vec<f32>>,
     pub snr_back: Option<Vec<f32>>,
     pub phase: String,
+    pub average_stats: Option<AverageStats>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AverageStats {
+    pub lna_off_samples: u32,
+    pub lna_off_roof_to_mtn: Option<f32>,
+    pub lna_off_mtn_to_roof: Option<f32>,
+    pub lna_on_samples: u32,
+    pub lna_on_roof_to_mtn: Option<f32>,
+    pub lna_on_mtn_to_roof: Option<f32>,
+}
+
+impl AverageStats {
+    pub fn delta_roof_to_mtn(&self) -> Option<f32> {
+        match (self.lna_on_roof_to_mtn, self.lna_off_roof_to_mtn) {
+            (Some(on), Some(off)) => Some(on - off),
+            _ => None,
+        }
+    }
+
+    pub fn delta_mtn_to_roof(&self) -> Option<f32> {
+        match (self.lna_on_mtn_to_roof, self.lna_off_mtn_to_roof) {
+            (Some(on), Some(off)) => Some(on - off),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct PhaseStats {
+    samples: u32,
+    sum_roof_to_mtn: f32,
+    sum_mtn_to_roof: f32,
+}
+
+impl PhaseStats {
+    fn add_sample(&mut self, roof_to_mtn: Option<f32>, mtn_to_roof: Option<f32>) {
+        if let Some(val) = roof_to_mtn {
+            self.sum_roof_to_mtn += val;
+        }
+        if let Some(val) = mtn_to_roof {
+            self.sum_mtn_to_roof += val;
+        }
+        self.samples += 1;
+    }
+
+    fn average_roof_to_mtn(&self) -> Option<f32> {
+        if self.samples == 0 {
+            None
+        } else {
+            Some(self.sum_roof_to_mtn / self.samples as f32)
+        }
+    }
+
+    fn average_mtn_to_roof(&self) -> Option<f32> {
+        if self.samples == 0 {
+            None
+        } else {
+            Some(self.sum_mtn_to_roof / self.samples as f32)
+        }
+    }
 }
 
 pub struct Engine {
     config: Config,
     transport: Box<dyn Transport>,
+    session_keys: HashMap<String, Vec<u8>>,
+    stats_lna_on: PhaseStats,
+    stats_lna_off: PhaseStats,
 }
 
 impl Engine {
     pub fn new(config: Config, transport: Box<dyn Transport>) -> Self {
-        Self { config, transport }
+        Self {
+            config,
+            transport,
+            session_keys: HashMap::new(),
+            stats_lna_on: PhaseStats::default(),
+            stats_lna_off: PhaseStats::default(),
+        }
     }
 
     pub async fn run<F>(&mut self, on_progress: F) -> Result<()>
@@ -35,16 +104,16 @@ impl Engine {
         F: Fn(ProgressState) + Send + Sync + 'static,
     {
         let mut rx = self.transport.connect().await?;
-        
+
         // Inject User Identity (Client-Side Signing)
         // Private Key provided by user
         let priv_key_b64 = "EP7uGaSlaoJHVp5wYVzv5O6fQQNx+q8yb9OshyMANmU=";
         use base64::Engine;
         if let Ok(priv_bytes) = base64::prelude::BASE64_STANDARD.decode(priv_key_b64) {
-             println!("Injecting User Identity (Client-Side Signing)...");
-             self.transport.set_identity(priv_bytes).await;
+            println!("Injecting User Identity (Client-Side Signing)...");
+            self.transport.set_identity(priv_bytes).await;
         } else {
-             println!("Error decoding private key!");
+            println!("Error decoding private key!");
         }
 
         let total_cycles = self.config.cycles;
@@ -52,7 +121,7 @@ impl Engine {
         for cycle in 0..total_cycles {
             // --- Phase 1: LNA OFF ---
             self.report_phase_start(&on_progress, cycle, total_cycles, "LNA OFF", 1);
-            
+
             // Toggle LNA OFF
             // Toggle LNA OFF
             if let Err(e) = self.set_lna_mode(&mut rx, false).await {
@@ -64,7 +133,16 @@ impl Engine {
 
             // Run Traceroute Loop
             // Run Traceroute Loop
-            self.run_traceroute_phase(&mut rx, &on_progress, cycle, "LNA OFF", 1, total_cycles).await?;
+            self.run_traceroute_phase(
+                &mut rx,
+                &on_progress,
+                cycle,
+                "LNA OFF",
+                1,
+                total_cycles,
+                false,
+            )
+            .await?;
 
             // --- Phase 2: LNA ON ---
             self.report_phase_start(&on_progress, cycle, total_cycles, "LNA ON", 2);
@@ -80,8 +158,19 @@ impl Engine {
 
             // Run Traceroute Loop
             // Run Traceroute Loop
-            self.run_traceroute_phase(&mut rx, &on_progress, cycle, "LNA ON", 2, total_cycles).await?;
+            self.run_traceroute_phase(
+                &mut rx,
+                &on_progress,
+                cycle,
+                "LNA ON",
+                2,
+                total_cycles,
+                true,
+            )
+            .await?;
         }
+
+        self.log_average_summary();
 
         // Send final completion progress
         on_progress(ProgressState {
@@ -92,254 +181,285 @@ impl Engine {
             snr_towards: None,
             snr_back: None,
             phase: "Done".to_string(),
+            average_stats: Some(self.current_average_stats()),
         });
 
-        self.transport.disconnect().await?;
-        Ok(())
-    }
-
-    async fn set_lna_mode(&mut self, rx: &mut meshtastic::packet::PacketReceiver, enable: bool) -> Result<()> {
-        let target_node = match self.config.topology {
-            crate::config::Topology::Relay => self.config.roof_node_id.clone(),
-            crate::config::Topology::Direct => {
-                 self.config.target_node_id.clone()
-            }
-        }.unwrap_or_default();
-
-        if !target_node.is_empty() {
-             // Fetch Local Node Info first
-            println!("Fetching Local Node Info...");
-             let mut my_info_req = AdminMessage {
-                payload_variant: Some(admin_message::PayloadVariant::GetOwnerRequest(true)),
-                ..Default::default()
-            };
-            self.transport.send_packet(&"0".to_string(), PortNum::AdminApp as i32, my_info_req.encode_to_vec()).await?;
-            
-            // Wait briefly for info
-            let info_timeout = Duration::from_secs(3);
-            let info_start = Instant::now();
-            loop {
-                if info_start.elapsed() > info_timeout {
-                    println!("Warning: Could not fetch local node info.");
-                    break;
-                }
-                let sleep = tokio::time::sleep(Duration::from_millis(100));
-                tokio::select! {
-                    packet = rx.recv() => {
-                        if let Some(p) = packet {
-                           if let Some(meshtastic::protobufs::from_radio::PayloadVariant::Packet(mesh_pkt)) = p.payload_variant {
-                               if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(meshtastic::protobufs::Data { portnum, payload, .. })) = mesh_pkt.payload_variant {
-                                    if portnum == PortNum::AdminApp as i32 {
-                                        if let Ok(admin_rsp) = AdminMessage::decode(payload.as_slice()) {
-                                            if let Some(admin_message::PayloadVariant::GetOwnerResponse(user)) = admin_rsp.payload_variant {
-                                                println!("Local Node Identity: ID: {}, LongName: {}, ShortName: {}", user.id, user.long_name, user.short_name);
-                                                println!("> Please ensure THIS ID ({}) is in the Roof Node's Admin List.", user.id);
-                                                break;
-                                            }
-                                        }
-                                    }
-                               }
-                           }
-                        }
-                    }
-                    _ = sleep => {}
-                }
-            }
-
-            println!("Requesting LoRa Config from {}...", target_node);
-
-            // 1. Get Config Request
-            let get_req = AdminMessage {
-                payload_variant: Some(admin_message::PayloadVariant::GetConfigRequest(
-                    admin_message::ConfigType::from_i32(5).unwrap() as i32
-                )),
-                ..Default::default()
-            };
-            self.transport.send_admin(&target_node, get_req.clone()).await?;
-
-            // 2. Wait for Config Response
-            let target_id = if target_node.starts_with('!') {
-                 u32::from_str_radix(&target_node[1..], 16).unwrap_or(0)
-            } else {
-                 target_node.parse::<u32>().unwrap_or(0)
-            };
-
-            let mut current_lora_config: Option<config::LoRaConfig> = None;
-            let wait_start = Instant::now();
-            let timeout = Duration::from_secs(10);
-
-            loop {
-                if wait_start.elapsed() > timeout {
-                    println!("WARNING: Get Config Timed Out! Aborting LNA Toggle.");
-                    return Ok(()); 
-                }
-                
-                let sleep = tokio::time::sleep(Duration::from_millis(100));
-                tokio::select! {
-                    result = rx.recv() => {
-                        match result {
-                            Some(packet) => {
-                                use meshtastic::protobufs::{Data, PortNum};
-                                use meshtastic::protobufs::from_radio::PayloadVariant;
-                                
-                                if let Some(PayloadVariant::Packet(mesh_packet)) = packet.payload_variant {
-                                    if mesh_packet.from == target_id {
-                                         if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(Data { portnum, payload, .. })) = mesh_packet.payload_variant {
-                                             if portnum == PortNum::AdminApp as i32 {
-                                                 if let Ok(admin_msg) = AdminMessage::decode(payload.as_slice()) {
-                                                     if let Some(admin_message::PayloadVariant::GetConfigResponse(config)) = admin_msg.payload_variant {
-                                                         if let Some(config::PayloadVariant::Lora(lora)) = config.payload_variant {
-                                                             println!("Received LoRa Config. Current RX Gain: {:?}", lora.sx126x_rx_boosted_gain);
-                                                             current_lora_config = Some(lora);
-                                                             break;
-                                                         }
-                                                     }
-                                                 }
-                                             }
-                                         }
-                                    }
-                                }
-                            }
-                            None => break,
-                        }
-                    }
-                     _ = sleep => {}
-                }
-            }
-            
-            // 3. Modify and Set Config with Retry
-            if let Some(mut lora) = current_lora_config {
-                println!("Setting LNA (RX Boosted Gain) to {}...", enable);
-                lora.sx126x_rx_boosted_gain = enable;
-                
-                let set_req = AdminMessage {
-                    payload_variant: Some(admin_message::PayloadVariant::SetConfig(
-                        MeshConfig {
-                            payload_variant: Some(config::PayloadVariant::Lora(lora.clone())), // clone for loop use
-                        }
-                    )),
-                    ..Default::default()
-                };
-                
-                let mut success = false;
-
-                for attempt in 1..=10 {
-                     println!("Attempt {}/10: Setting LNA...", attempt);
-                     // Use PKI-enabled send_admin
-                     self.transport.send_admin(&target_node, set_req.clone()).await?;
-                     println!("Set Config Request sent (PKI Encrypted). Waiting for ACK/Response...");
-
-                     // Monitor for immediate response (Error or Success)
-                     let ack_start = Instant::now();
-                     let ack_timeout = Duration::from_secs(3);
-                     loop {
-                        if ack_start.elapsed() > ack_timeout {
-                             println!("Wait for SetACK timed out (This is normal if node is silent on success).");
-                             break;
-                        }
-                        let sleep = tokio::time::sleep(Duration::from_millis(100));
-                        tokio::select! {
-                            result = rx.recv() => {
-                                match result {
-                                    Some(packet) => {
-                                        if let Some(meshtastic::protobufs::from_radio::PayloadVariant::Packet(mesh_packet)) = packet.payload_variant {
-                                             if mesh_packet.from == target_id {
-                                                 // Log any packet from target during this window
-                                                  if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(meshtastic::protobufs::Data { portnum, payload, .. })) = mesh_packet.payload_variant {
-                                                      println!("Received packet from target on port {}: {:02X?}", portnum, payload);
-                                                      // Check if it is AdminMessage
-                                                      if portnum == PortNum::AdminApp as i32 {
-                                                          if let Ok(admin_msg) = AdminMessage::decode(payload.as_slice()) {
-                                                              println!("AdminMessage Response: {:?}", admin_msg.payload_variant);
-                                                          }
-                                                      }
-                                                  }
-                                             }
-                                        }
-                                    }
-                                    None => break,
-                                }
-                            }
-                            _ = sleep => {}
-                        }
-                     }
-
-                     println!("Verifying..."); 
-
-                     // 4. Read-Back Verification
-                     tokio::time::sleep(Duration::from_secs(2)).await; // Wait for write to settle
-                     
-                     self.transport.send_packet(&target_node, PortNum::AdminApp as i32, get_req.encode_to_vec()).await?;
-                     
-                     let verify_start = Instant::now();
-                     let mut verified = false;
-                     
-                     loop {
-                        if verify_start.elapsed() > timeout {
-                            println!("WARNING: Verification Read Timed Out! (Attempt {})", attempt);
-                            break;
-                        }
-
-                        let sleep = tokio::time::sleep(Duration::from_millis(100));
-                        tokio::select! {
-                            result = rx.recv() => {
-                                match result {
-                                    Some(packet) => {
-                                        use meshtastic::protobufs::{Data, PortNum};
-                                        use meshtastic::protobufs::from_radio::PayloadVariant;
-                                        
-                                        if let Some(PayloadVariant::Packet(mesh_packet)) = packet.payload_variant {
-                                            if mesh_packet.from == target_id {
-                                                 if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(Data { portnum, payload, .. })) = mesh_packet.payload_variant {
-                                                     if portnum == PortNum::AdminApp as i32 {
-                                                         if let Ok(admin_msg) = AdminMessage::decode(payload.as_slice()) {
-                                                             if let Some(admin_message::PayloadVariant::GetConfigResponse(config)) = admin_msg.payload_variant {
-                                                                 if let Some(config::PayloadVariant::Lora(lora)) = config.payload_variant {
-                                                                     if lora.sx126x_rx_boosted_gain == enable {
-                                                                         println!("✅ LNA Setting VERIFIED! (Current: {})", lora.sx126x_rx_boosted_gain);
-                                                                         verified = true;
-                                                                     } else {
-                                                                         println!("❌ LNA Verification FAILED! (Expected: {}, Got: {})", enable, lora.sx126x_rx_boosted_gain);
-                                                                     }
-                                                                     break;
-                                                                 }
-                                                             }
-                                                         }
-                                                     }
-                                                 }
-                                            }
-                                        }
-                                    }
-                                    None => break,
-                                }
-                            }
-                             _ = sleep => {}
-                        }
-                    }
-                    
-                    if verified {
-                        success = true;
-                        break;
-                    } else {
-                        println!("⚠️ Attempt {} failed. Retrying...", attempt);
-                        tokio::time::sleep(Duration::from_secs(1)).await; // Backoff slightly
-                    }
-                }
-
-                if !success {
-                    let err_msg = format!("CRITICAL ERROR: Failed to toggle LNA to {} after 10 attempts! Aborting test.", enable);
-                    println!("{}", err_msg);
-                    return Err(anyhow::anyhow!(err_msg));
-                }
-            }
+        if let Err(e) = self.transport.disconnect().await {
+            println!("Warning: Failed to disconnect cleanly: {e}");
         }
         Ok(())
     }
 
-    fn report_phase_start<F>(&self, on_progress: &F, cycle: u32, total_cycles: u32, phase_name: &str, phase_num: u8)
-    where F: Fn(ProgressState) + Send + Sync + 'static {
+    async fn set_lna_mode(
+        &mut self,
+        rx: &mut meshtastic::packet::PacketReceiver,
+        enable: bool,
+    ) -> Result<()> {
+        let target_node = match self.config.topology {
+            crate::config::Topology::Relay => self.config.roof_node_id.clone(),
+            crate::config::Topology::Direct => self.config.target_node_id.clone(),
+        }
+        .unwrap_or_default();
+
+        if target_node.is_empty() {
+            return Ok(());
+        }
+
+        let target_id = if target_node.starts_with('!') {
+            u32::from_str_radix(&target_node[1..], 16).unwrap_or(0)
+        } else {
+            target_node.parse::<u32>().unwrap_or(0)
+        };
+
+        println!("Fetching Local Node Info...");
+        let owner_req = AdminMessage {
+            payload_variant: Some(admin_message::PayloadVariant::GetOwnerRequest(true)),
+            ..Default::default()
+        };
+        self.send_admin_with_session("0", &owner_req).await?;
+
+        let info_timeout = Duration::from_secs(3);
+        let info_start = Instant::now();
+        loop {
+            if info_start.elapsed() > info_timeout {
+                println!("Warning: Could not fetch local node info.");
+                break;
+            }
+            let sleep = tokio::time::sleep(Duration::from_millis(100));
+            tokio::select! {
+                packet = rx.recv() => {
+                    if let Some(p) = packet {
+                        self.remember_session_key_from_packet(&p);
+                        if let Some(meshtastic::protobufs::from_radio::PayloadVariant::Packet(mesh_pkt)) = p.payload_variant {
+                            if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(meshtastic::protobufs::Data { portnum, payload, .. })) = mesh_pkt.payload_variant {
+                                if portnum == PortNum::AdminApp as i32 {
+                                    if let Ok(admin_rsp) = AdminMessage::decode(payload.as_slice()) {
+                                        if let Some(admin_message::PayloadVariant::GetOwnerResponse(user)) = admin_rsp.payload_variant {
+                                            println!("Local Node Identity: ID: {}, LongName: {}, ShortName: {}", user.id, user.long_name, user.short_name);
+                                            println!("> Please ensure THIS ID ({}) is in the Roof Node's Admin List.", user.id);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _ = sleep => {}
+            }
+        }
+
+        println!("Requesting LoRa Config from {}...", target_node);
+
+        if !self.has_session_key(&target_node) {
+            let session_req = AdminMessage {
+                payload_variant: Some(admin_message::PayloadVariant::GetConfigRequest(
+                    admin_message::ConfigType::SessionkeyConfig as i32,
+                )),
+                ..Default::default()
+            };
+            self.send_admin_with_session(&target_node, &session_req)
+                .await?;
+        }
+
+        let get_req = AdminMessage {
+            payload_variant: Some(admin_message::PayloadVariant::GetConfigRequest(
+                admin_message::ConfigType::LoraConfig as i32,
+            )),
+            ..Default::default()
+        };
+        self.send_admin_with_session(&target_node, &get_req).await?;
+
+        let mut current_lora_config: Option<config::LoRaConfig> = None;
+        let wait_start = Instant::now();
+        let timeout = Duration::from_secs(10);
+
+        loop {
+            if wait_start.elapsed() > timeout {
+                let msg = format!(
+                    "WARNING: Get Config timed out for {}! Aborting LNA Toggle.",
+                    target_node
+                );
+                println!("{}", msg);
+                return Err(anyhow::anyhow!(msg));
+            }
+
+            let sleep = tokio::time::sleep(Duration::from_millis(100));
+            tokio::select! {
+                result = rx.recv() => {
+                    match result {
+                        Some(packet) => {
+                            self.remember_session_key_from_packet(&packet);
+                            use meshtastic::protobufs::{Data, PortNum};
+                            use meshtastic::protobufs::from_radio::PayloadVariant;
+
+                            if let Some(PayloadVariant::Packet(mesh_packet)) = packet.payload_variant {
+                                if mesh_packet.from == target_id {
+                                     if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(Data { portnum, payload, .. })) = mesh_packet.payload_variant {
+                                         if portnum == PortNum::AdminApp as i32 {
+                                             if let Ok(admin_msg) = AdminMessage::decode(payload.as_slice()) {
+                                                 if let Some(admin_message::PayloadVariant::GetConfigResponse(config)) = admin_msg.payload_variant {
+                                                     if let Some(config::PayloadVariant::Lora(lora)) = config.payload_variant {
+                                                         println!("Received LoRa Config. Current RX Gain: {:?}", lora.sx126x_rx_boosted_gain);
+                                                         current_lora_config = Some(lora);
+                                                         break;
+                                                     }
+                                                 }
+                                             }
+                                         }
+                                     }
+                                }
+                            }
+                        }
+                        None => break,
+                    }
+                }
+                _ = sleep => {}
+            }
+        }
+
+        if let Some(mut lora) = current_lora_config {
+            println!("Setting LNA (RX Boosted Gain) to {}...", enable);
+            lora.sx126x_rx_boosted_gain = enable;
+
+            let set_req = AdminMessage {
+                payload_variant: Some(admin_message::PayloadVariant::SetConfig(MeshConfig {
+                    payload_variant: Some(config::PayloadVariant::Lora(lora.clone())),
+                })),
+                ..Default::default()
+            };
+
+            let mut success = false;
+
+            for attempt in 1..=10 {
+                println!("Attempt {}/10: Setting LNA...", attempt);
+                self.send_admin_with_session(&target_node, &set_req).await?;
+                println!("Set Config Request sent (PKI Encrypted). Waiting for ACK/Response...");
+
+                let ack_start = Instant::now();
+                let ack_timeout = Duration::from_secs(3);
+                loop {
+                    if ack_start.elapsed() > ack_timeout {
+                        println!(
+                            "Wait for SetACK timed out (This is normal if node is silent on success)."
+                        );
+                        break;
+                    }
+                    let sleep = tokio::time::sleep(Duration::from_millis(100));
+                    tokio::select! {
+                        result = rx.recv() => {
+                            match result {
+                                Some(packet) => {
+                                    self.remember_session_key_from_packet(&packet);
+                                    if let Some(meshtastic::protobufs::from_radio::PayloadVariant::Packet(mesh_packet)) = packet.payload_variant {
+                                        if mesh_packet.from == target_id {
+                                            if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(meshtastic::protobufs::Data { portnum, payload, .. })) = mesh_packet.payload_variant {
+                                                println!("Received packet from target on port {}: {:02X?}", portnum, payload);
+                                                if portnum == PortNum::AdminApp as i32 {
+                                                    if let Ok(admin_msg) = AdminMessage::decode(payload.as_slice()) {
+                                                        println!("AdminMessage Response: {:?}", admin_msg.payload_variant);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                None => break,
+                            }
+                        }
+                        _ = sleep => {}
+                    }
+                }
+
+                println!("Verifying...");
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                self.send_admin_with_session(&target_node, &get_req).await?;
+
+                let verify_start = Instant::now();
+                let mut verified = false;
+
+                loop {
+                    if verify_start.elapsed() > timeout {
+                        println!(
+                            "WARNING: Verification Read Timed Out! (Attempt {})",
+                            attempt
+                        );
+                        break;
+                    }
+
+                    let sleep = tokio::time::sleep(Duration::from_millis(100));
+                    tokio::select! {
+                        result = rx.recv() => {
+                            match result {
+                                Some(packet) => {
+                                    self.remember_session_key_from_packet(&packet);
+                                    use meshtastic::protobufs::{Data, PortNum};
+                                    use meshtastic::protobufs::from_radio::PayloadVariant;
+
+                                    if let Some(PayloadVariant::Packet(mesh_packet)) = packet.payload_variant {
+                                        if mesh_packet.from == target_id {
+                                             if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(Data { portnum, payload, .. })) = mesh_packet.payload_variant {
+                                                 if portnum == PortNum::AdminApp as i32 {
+                                                     if let Ok(admin_msg) = AdminMessage::decode(payload.as_slice()) {
+                                                         if let Some(admin_message::PayloadVariant::GetConfigResponse(config)) = admin_msg.payload_variant {
+                                                             if let Some(config::PayloadVariant::Lora(lora)) = config.payload_variant {
+                                                                 if lora.sx126x_rx_boosted_gain == enable {
+                                                                     println!("✅ LNA Setting VERIFIED! (Current: {})", lora.sx126x_rx_boosted_gain);
+                                                                     verified = true;
+                                                                 } else {
+                                                                     println!("❌ LNA Verification FAILED! (Expected: {}, Got: {})", enable, lora.sx126x_rx_boosted_gain);
+                                                                 }
+                                                                 break;
+                                                             }
+                                                         }
+                                                     }
+                                                 }
+                                             }
+                                        }
+                                    }
+                                }
+                                None => break,
+                            }
+                        }
+                        _ = sleep => {}
+                    }
+                }
+
+                if verified {
+                    success = true;
+                    break;
+                } else {
+                    println!("⚠️ Attempt {} failed. Retrying...", attempt);
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+
+            if !success {
+                let err_msg = format!(
+                    "CRITICAL ERROR: Failed to toggle LNA to {} after 10 attempts! Aborting test.",
+                    enable
+                );
+                println!("{}", err_msg);
+                return Err(anyhow::anyhow!(err_msg));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn report_phase_start<F>(
+        &self,
+        on_progress: &F,
+        cycle: u32,
+        total_cycles: u32,
+        phase_name: &str,
+        phase_num: u8,
+    ) where
+        F: Fn(ProgressState) + Send + Sync + 'static,
+    {
         // Global ETA Calculation
-        let total_duration_secs = (total_cycles as u64) * 2 * (self.config.phase_duration_ms as u64 / 1000);
+        let total_duration_secs =
+            (total_cycles as u64) * 2 * (self.config.phase_duration_ms as u64 / 1000);
         let passed_phases = (cycle * 2) + (phase_num as u32 - 1);
         let passed_seconds = passed_phases as u64 * (self.config.phase_duration_ms as u64 / 1000);
         let remaining = total_duration_secs.saturating_sub(passed_seconds);
@@ -347,31 +467,39 @@ impl Engine {
         on_progress(ProgressState {
             total_progress: (passed_phases as f32) / ((total_cycles * 2) as f32),
             current_round_progress: 0.0,
-            status_message: format!("Cycle {}/{}: Starting Phase {} ({})", cycle + 1, total_cycles, phase_num, phase_name),
+            status_message: format!(
+                "Cycle {}/{}: Starting Phase {} ({})",
+                cycle + 1,
+                total_cycles,
+                phase_num,
+                phase_name
+            ),
             eta_seconds: remaining,
             snr_towards: None,
             snr_back: None,
             phase: phase_name.to_string(),
+            average_stats: None,
         });
     }
 
     async fn run_traceroute_phase<F>(
         &mut self,
-        rx: &mut meshtastic::packet::PacketReceiver, 
+        rx: &mut meshtastic::packet::PacketReceiver,
         on_progress: &F,
         cycle: u32,
         phase_name: &str,
         phase_num: u8,
-        total_cycles: u32
+        total_cycles: u32,
+        is_lna_on: bool,
     ) -> Result<()>
     where
         F: Fn(ProgressState) + Send + Sync + 'static,
     {
         let start_time = Instant::now();
         let phase_duration = Duration::from_millis(self.config.phase_duration_ms as u64);
-        let total_steps = self.config.phase_duration_ms / 1000; 
+        let total_steps = self.config.phase_duration_ms / 1000;
         let mut interval = tokio::time::interval(Duration::from_secs(1));
-        
+
         // Consume the first tick
         interval.tick().await;
 
@@ -402,25 +530,26 @@ impl Engine {
                     let global_progress = (current_global_phase_idx as f32 + progress) / total_phases as f32;
 
                     on_progress(ProgressState {
-                        total_progress: global_progress.min(0.99), 
-                        current_round_progress: progress, 
+                        total_progress: global_progress.min(0.99),
+                        current_round_progress: progress,
                         status_message: format!("Cycle {}: {} - Step {}/{}", cycle + 1, phase_name, elapsed_secs, total_steps),
                         eta_seconds: global_remaining,
                         snr_towards: None,
                         snr_back: None,
                         phase: phase_name.to_string(),
+                        average_stats: None,
                     });
 
                     // Send traceroute based on configured interval
                     let interval_secs = self.config.interval_ms / 1000;
-                    
+
                     if interval_secs > 0 && elapsed_secs % (interval_secs as u64) == 0 {
                          // Determine target based on topology
                          let target = match self.config.topology {
                              crate::config::Topology::Relay => self.config.mountain_node_id.clone(),
                              crate::config::Topology::Direct => self.config.target_node_id.clone(),
                          }.unwrap_or_default();
-                         
+
                          if !target.is_empty() {
                              println!("Sending traceroute to {}", target);
                              use std::io::Write;
@@ -434,7 +563,8 @@ impl Engine {
                 result = rx.recv() => {
                     match result {
                         Some(packet) => {
-                            use meshtastic::protobufs::{MeshPacket, PortNum, Data, RouteDiscovery};
+                            self.remember_session_key_from_packet(&packet);
+                            use meshtastic::protobufs::{PortNum, Data, RouteDiscovery};
                             use meshtastic::protobufs::from_radio::PayloadVariant;
                             use prost::Message;
 
@@ -444,11 +574,28 @@ impl Engine {
                                          match RouteDiscovery::decode(&payload[..]) {
                                              Ok(route_discovery) => {
                                                  println!("TRACEROUTE RESPONSE RECEIVED! ({})", phase_name);
-                                                 
+
                                                  let snr_towards: Vec<f32> = route_discovery.snr_towards.iter().map(|&x| x as f32 / 4.0).collect();
                                                  let snr_back: Vec<f32> = route_discovery.snr_back.iter().map(|&x| x as f32 / 4.0).collect();
 
-                                                 // Emit live SNR data
+                                                 let hit_floor = snr_towards.iter().chain(snr_back.iter()).any(|value| (*value + 32.0).abs() < f32::EPSILON);
+                                                 if hit_floor {
+                                                     println!("Skipping traceroute sample (SNR hit -32 dB floor).");
+                                                     continue;
+                                                 }
+
+                                                 let roof_to_mtn_sample = snr_towards.get(1).copied();
+                                                 let mtn_to_roof_sample = snr_back.get(0).copied();
+
+                                                 if is_lna_on {
+                                                     self.stats_lna_on.add_sample(roof_to_mtn_sample, mtn_to_roof_sample);
+                                                 } else {
+                                                     self.stats_lna_off.add_sample(roof_to_mtn_sample, mtn_to_roof_sample);
+                                                 }
+
+                                                 let averages_snapshot = self.current_average_stats();
+
+                                                 // Emit live SNR data along with averages
                                                  on_progress(ProgressState {
                                                      total_progress: (cycle as f32) / (total_cycles as f32), // Approximate
                                                      current_round_progress: 0.0, // Don't disrupt progress bar
@@ -457,8 +604,9 @@ impl Engine {
                                                      snr_towards: Some(snr_towards.clone()),
                                                      snr_back: Some(snr_back.clone()),
                                                      phase: phase_name.to_string(),
+                                                     average_stats: Some(averages_snapshot),
                                                  });
-                                                 
+
                                                  // Parse configured Roof Node ID to check match
                                                  let roof_id_str = self.config.roof_node_id.clone().unwrap_or_default();
                                                  let roof_id = if roof_id_str.starts_with('!') {
@@ -471,10 +619,10 @@ impl Engine {
                                                  if matches!(self.config.topology, crate::config::Topology::Relay) {
                                                      if route_discovery.route.contains(&roof_id) {
                                                          println!("✅ VALIDATION PASS: Route contains configured Roof Node ({} / {:x})", roof_id, roof_id);
-                                                         
-                                                         let mut record = TracerouteRecord {
-                                                             timestamp: chrono::Local::now().to_rfc3339(),
-                                                             cycle,
+
+                                                         let record = TracerouteRecord {
+                                                            timestamp: chrono::Local::now().to_rfc3339(),
+                                                            cycle,
                                                              phase: phase_name.to_string(),
                                                              route: format!("{:?}", route_discovery.route),
                                                              snr_towards_1_room_roof: snr_towards.get(0).copied(),
@@ -489,7 +637,7 @@ impl Engine {
                                                              println!("Mtn  -> Roof: {:.2} dB", snr_back[0]);
                                                              println!("-----------------------------");
                                                          }
-                                                         
+
                                                          if let Err(e) = self.append_csv_record(&record) {
                                                              println!("Error writing CSV: {}", e);
                                                          } else {
@@ -515,7 +663,7 @@ impl Engine {
                         }
                         None => {
                             println!("Transport channel closed unexpectedly.");
-                            break; 
+                            break;
                         }
                     }
                 }
@@ -540,9 +688,31 @@ struct TracerouteRecord {
 impl Engine {
     // ... existing new and run methods ...
 
-    fn calculate_total_duration(&self) -> Duration {
-        // TODO: Calculate based on config
-        Duration::from_secs(60)
+    fn log_average_summary(&self) {
+        let stats = self.current_average_stats();
+        println!("================ LNA Comparison Summary ================");
+        println!(
+            "Samples - LNA OFF: {}, LNA ON: {}",
+            stats.lna_off_samples, stats.lna_on_samples
+        );
+        println!(
+            "Roof -> Mountain (avg) | OFF: {} dB | ON: {} dB | Δ: {} dB",
+            display_opt(stats.lna_off_roof_to_mtn),
+            display_opt(stats.lna_on_roof_to_mtn),
+            display_opt(stats.delta_roof_to_mtn())
+        );
+        println!(
+            "Mountain -> Roof (avg) | OFF: {} dB | ON: {} dB | Δ: {} dB",
+            display_opt(stats.lna_off_mtn_to_roof),
+            display_opt(stats.lna_on_mtn_to_roof),
+            display_opt(stats.delta_mtn_to_roof())
+        );
+        println!("========================================================");
+
+        fn display_opt(val: Option<f32>) -> String {
+            val.map(|v| format!("{:.2}", v))
+                .unwrap_or_else(|| "--".into())
+        }
     }
 
     fn append_csv_record(&self, record: &TracerouteRecord) -> Result<()> {
@@ -559,5 +729,99 @@ impl Engine {
         writer.serialize(record)?;
         writer.flush()?;
         Ok(())
+    }
+
+    fn current_average_stats(&self) -> AverageStats {
+        AverageStats {
+            lna_off_samples: self.stats_lna_off.samples,
+            lna_off_roof_to_mtn: self.stats_lna_off.average_roof_to_mtn(),
+            lna_off_mtn_to_roof: self.stats_lna_off.average_mtn_to_roof(),
+            lna_on_samples: self.stats_lna_on.samples,
+            lna_on_roof_to_mtn: self.stats_lna_on.average_roof_to_mtn(),
+            lna_on_mtn_to_roof: self.stats_lna_on.average_mtn_to_roof(),
+        }
+    }
+
+    fn normalized_node_id(node_id: &str) -> Option<String> {
+        if node_id.is_empty() {
+            return None;
+        }
+
+        if let Some(id) = node_id.strip_prefix('!') {
+            u32::from_str_radix(id, 16)
+                .ok()
+                .map(|num| format!("!{:08x}", num))
+        } else if let Some(id) = node_id
+            .strip_prefix("0x")
+            .or_else(|| node_id.strip_prefix("0X"))
+        {
+            u32::from_str_radix(id, 16)
+                .ok()
+                .map(|num| format!("!{:08x}", num))
+        } else if node_id.eq_ignore_ascii_case("broadcast") {
+            Some(format!("!{:08x}", u32::MAX))
+        } else {
+            node_id
+                .parse::<u32>()
+                .ok()
+                .map(|num| format!("!{:08x}", num))
+        }
+    }
+
+    fn format_node_from_u32(node_num: u32) -> String {
+        format!("!{:08x}", node_num)
+    }
+
+    fn store_session_key(&mut self, node_num: u32, key: &[u8]) {
+        if key.is_empty() {
+            return;
+        }
+        let normalized = Self::format_node_from_u32(node_num);
+        if !self.session_keys.contains_key(&normalized) {
+            println!("Stored session key for node {}", normalized);
+        }
+        self.session_keys.insert(normalized, key.to_vec());
+    }
+
+    fn apply_session_key(&self, node_id: &str, msg: &mut AdminMessage) {
+        if let Some(normalized) = Self::normalized_node_id(node_id) {
+            if let Some(key) = self.session_keys.get(&normalized) {
+                msg.session_passkey = key.clone();
+            }
+        }
+    }
+
+    fn remember_session_key_from_packet(&mut self, packet: &meshtastic::protobufs::FromRadio) {
+        if let Some(meshtastic::protobufs::from_radio::PayloadVariant::Packet(mesh_packet)) =
+            &packet.payload_variant
+        {
+            if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(ref data)) =
+                mesh_packet.payload_variant
+            {
+                if data.portnum == PortNum::AdminApp as i32 {
+                    if let Ok(admin_msg) = AdminMessage::decode(data.payload.as_slice()) {
+                        if !admin_msg.session_passkey.is_empty() {
+                            self.store_session_key(mesh_packet.from, &admin_msg.session_passkey);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn has_session_key(&self, node_id: &str) -> bool {
+        Self::normalized_node_id(node_id)
+            .map(|id| self.session_keys.contains_key(&id))
+            .unwrap_or(false)
+    }
+
+    async fn send_admin_with_session(
+        &mut self,
+        target: &str,
+        template: &AdminMessage,
+    ) -> Result<()> {
+        let mut msg = template.clone();
+        self.apply_session_key(target, &mut msg);
+        self.transport.send_admin(target, msg).await
     }
 }

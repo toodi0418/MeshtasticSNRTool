@@ -24,4 +24,14 @@ export interface ProgressState {
     snr_towards?: number[];
     snr_back?: number[];
     phase?: string;
+    average_stats?: AverageStats;
+}
+
+export interface AverageStats {
+    lna_off_samples: number;
+    lna_off_roof_to_mtn?: number | null;
+    lna_off_mtn_to_roof?: number | null;
+    lna_on_samples: number;
+    lna_on_roof_to_mtn?: number | null;
+    lna_on_mtn_to_roof?: number | null;
 }

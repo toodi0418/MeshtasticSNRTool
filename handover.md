@@ -7,6 +7,7 @@
 - **Automated Testing Engine**: Cycles through "LNA OFF" and "LNA ON" phases.
 - **Remote Admin Control**: Toggles settings on remote nodes via the Mesh.
 - **Traceroute Analysis**: Collects SNR and RSSI data hop-by-hop.
+- **LNA 差異分析**: 針對 ON/OFF 兩個 phase 累積平均 SNR，並計算差值做為測試總結。
 - **Cross-Platform**: Runs as a CLI tool or a GUI Desktop App (Windows/macOS/Linux).
 
 ---
@@ -44,6 +45,7 @@ MSNRTool/
     - **Framework**: Vite + React + TypeScript.
     - **Styling**: TailwindCSS / CSS Modules.
     - **Visualization**: Real-time progress bars and status logs.
+    - **LNA Stats Card**: 顯示 OFF/ON 兩組平均 SNR、樣本數與差值（收到首筆有效 SNR 後即更新）。
 
 ---
 
@@ -79,8 +81,9 @@ The `Engine` loop works as follows:
     - Collects SNR data from responses.
 3. **Phase 2 (LNA ON)**:
     - Sets `sx126x_rx_boosted_gain = true`.
-    - Repeats data collection.
+    - Repeats data collection與平均統計。
 4. **Report**: Saves all data to `results.csv`.
+5. **Summary**: CLI 與 GUI 會顯示 OFF/ON 平均值與差值；若任一 LNA 設定/驗證階段超時則立即中止，確保測試結果可靠。
 
 ---
 
@@ -125,3 +128,4 @@ npm run tauri dev
 - [ ] **Live Charts**: Visualize SNR over time in the GUI.
 - [ ] **Serial Transport**: Finish implementing `send_admin` for USB Serial.
 - [ ] **Map View**: Show traceroute hops on a map.
+- [ ] 更進階的平均統計（例如 RSSI、標準差），以及在 GUI/CSV 中匯出。
