@@ -86,6 +86,7 @@ pub struct Engine {
     session_keys: HashMap<String, Vec<u8>>,
     stats_lna_on: PhaseStats,
     stats_lna_off: PhaseStats,
+    local_node_numeric_id: Option<u32>,
 }
 
 impl Engine {
@@ -96,6 +97,7 @@ impl Engine {
             session_keys: HashMap::new(),
             stats_lna_on: PhaseStats::default(),
             stats_lna_off: PhaseStats::default(),
+            local_node_numeric_id: None,
         }
     }
 
@@ -234,13 +236,18 @@ impl Engine {
                             if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(meshtastic::protobufs::Data { portnum, payload, .. })) = mesh_pkt.payload_variant {
                                 if portnum == PortNum::AdminApp as i32 {
                                     if let Ok(admin_rsp) = AdminMessage::decode(payload.as_slice()) {
-                                        if let Some(admin_message::PayloadVariant::GetOwnerResponse(user)) = admin_rsp.payload_variant {
-                                            println!("Local Node Identity: ID: {}, LongName: {}, ShortName: {}", user.id, user.long_name, user.short_name);
-                                            println!("> Please ensure THIS ID ({}) is in the Roof Node's Admin List.", user.id);
-                                            break;
+                                            if let Some(admin_message::PayloadVariant::GetOwnerResponse(user)) = admin_rsp.payload_variant {
+                                                println!("Local Node Identity: ID: {}, LongName: {}, ShortName: {}", user.id, user.long_name, user.short_name);
+                                                println!("> Please ensure THIS ID ({}) is in the Roof Node's Admin List.", user.id);
+
+                                                if let Some(parsed_id) = Self::parse_node_id_str(&user.id) {
+                                                    self.local_node_numeric_id = Some(parsed_id);
+                                                }
+
+                                                break;
+                                            }
                                         }
                                     }
-                                }
                             }
                         }
                     }
@@ -569,11 +576,11 @@ impl Engine {
                                 if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(Data { portnum, payload, .. })) = mesh_packet.payload_variant {
                                      if portnum == PortNum::TracerouteApp as i32 {
                                          match RouteDiscovery::decode(&payload[..]) {
-                                             Ok(route_discovery) => {
-                                                 println!("TRACEROUTE RESPONSE RECEIVED! ({})", phase_name);
+                                            Ok(route_discovery) => {
+                                                println!("TRACEROUTE RESPONSE RECEIVED! ({})", phase_name);
 
-                                                 let snr_towards: Vec<f32> = route_discovery.snr_towards.iter().map(|&x| x as f32 / 4.0).collect();
-                                                 let snr_back: Vec<f32> = route_discovery.snr_back.iter().map(|&x| x as f32 / 4.0).collect();
+                                                let snr_towards: Vec<f32> = route_discovery.snr_towards.iter().map(|&x| x as f32 / 4.0).collect();
+                                                let snr_back: Vec<f32> = route_discovery.snr_back.iter().map(|&x| x as f32 / 4.0).collect();
 
                                                  let hit_floor = snr_towards.iter().chain(snr_back.iter()).any(|value| (*value + 32.0).abs() < f32::EPSILON);
                                                  if hit_floor {
@@ -581,18 +588,54 @@ impl Engine {
                                                      continue;
                                                  }
 
-                                                 let roof_to_mtn_sample = snr_towards.get(1).copied();
-                                                 let mtn_to_roof_sample = snr_back.get(0).copied();
+                                                let roof_to_mtn_sample = snr_towards.get(1).copied();
+                                                let mtn_to_roof_sample = snr_back.get(0).copied();
 
-                                                 if is_lna_on {
-                                                     self.stats_lna_on.add_sample(roof_to_mtn_sample, mtn_to_roof_sample);
-                                                 } else {
-                                                     self.stats_lna_off.add_sample(roof_to_mtn_sample, mtn_to_roof_sample);
-                                                 }
+                                                if matches!(self.config.topology, crate::config::Topology::Relay) {
+                                                    let local_id = self
+                                                        .local_node_numeric_id
+                                                        .or_else(|| Self::parse_configured_node_u32(&self.config.local_node_id));
+                                                    let roof_id = match Self::parse_configured_node_u32(&self.config.roof_node_id) {
+                                                        Some(id) => id,
+                                                        None => {
+                                                            println!("❌ VALIDATION FAIL: Roof node ID is not configured, discarding sample.");
+                                                            continue;
+                                                        }
+                                                    };
+                                                    let mountain_id = match Self::parse_configured_node_u32(&self.config.mountain_node_id) {
+                                                        Some(id) => id,
+                                                        None => {
+                                                            println!("❌ VALIDATION FAIL: Mountain node ID is not configured, discarding sample.");
+                                                            continue;
+                                                        }
+                                                    };
 
-                                                 let averages_snapshot = self.current_average_stats();
+                                                    if let Err(reason) = Self::validate_relay_route(&route_discovery.route, local_id, roof_id, mountain_id) {
+                                                        println!(
+                                                            "❌ VALIDATION FAIL: {} | Route {:?}",
+                                                            reason,
+                                                            route_discovery.route
+                                                        );
+                                                        continue;
+                                                    }
 
-                                                 // Emit live SNR data along with averages
+                                                    println!(
+                                                        "✅ VALIDATION PASS: Route matches Local({}) -> Roof({}) -> Mountain({})",
+                                                        Self::format_node_id(local_id),
+                                                        Self::format_node_id(Some(roof_id)),
+                                                        Self::format_node_id(Some(mountain_id))
+                                                    );
+                                                }
+
+                                                if is_lna_on {
+                                                    self.stats_lna_on.add_sample(roof_to_mtn_sample, mtn_to_roof_sample);
+                                                } else {
+                                                    self.stats_lna_off.add_sample(roof_to_mtn_sample, mtn_to_roof_sample);
+                                                }
+
+                                                let averages_snapshot = self.current_average_stats();
+
+                                                // Emit live SNR data along with averages
                                                  on_progress(ProgressState {
                                                      total_progress: (cycle as f32) / (total_cycles as f32), // Approximate
                                                      current_round_progress: 0.0, // Don't disrupt progress bar
@@ -604,50 +647,35 @@ impl Engine {
                                                      average_stats: Some(averages_snapshot),
                                                  });
 
-                                                 // Parse configured Roof Node ID to check match
-                                                 let roof_id_str = self.config.roof_node_id.clone().unwrap_or_default();
-                                                 let roof_id = if roof_id_str.starts_with('!') {
-                                                     u32::from_str_radix(&roof_id_str[1..], 16).unwrap_or(0)
-                                                 } else {
-                                                     roof_id_str.parse::<u32>().unwrap_or(0)
-                                                 };
+                                                // Logic Validation for Relay Topology
+                                                if matches!(self.config.topology, crate::config::Topology::Relay) {
+                                                    let record = TracerouteRecord {
+                                                       timestamp: chrono::Local::now().to_rfc3339(),
+                                                       cycle,
+                                                        phase: phase_name.to_string(),
+                                                        route: format!("{:?}", route_discovery.route),
+                                                        snr_towards_1_room_roof: snr_towards.get(0).copied(),
+                                                        snr_towards_2_roof_mtn: snr_towards.get(1).copied(),
+                                                        snr_back_1_mtn_roof: snr_back.get(0).copied(),
+                                                        snr_back_2_roof_room: snr_back.get(1).copied(),
+                                                    };
 
-                                                 // Logic Validation for Relay Topology
-                                                 if matches!(self.config.topology, crate::config::Topology::Relay) {
-                                                     if route_discovery.route.contains(&roof_id) {
-                                                         println!("✅ VALIDATION PASS: Route contains configured Roof Node ({} / {:x})", roof_id, roof_id);
+                                                    if snr_towards.len() >= 2 && snr_back.len() >= 2 {
+                                                        println!("--- SNR DATA (Roof <-> Mtn) ---");
+                                                        println!("Roof -> Mtn : {:.2} dB", snr_towards[1]);
+                                                        println!("Mtn  -> Roof: {:.2} dB", snr_back[0]);
+                                                        println!("-----------------------------");
+                                                    }
 
-                                                         let record = TracerouteRecord {
-                                                            timestamp: chrono::Local::now().to_rfc3339(),
-                                                            cycle,
-                                                             phase: phase_name.to_string(),
-                                                             route: format!("{:?}", route_discovery.route),
-                                                             snr_towards_1_room_roof: snr_towards.get(0).copied(),
-                                                             snr_towards_2_roof_mtn: snr_towards.get(1).copied(),
-                                                             snr_back_1_mtn_roof: snr_back.get(0).copied(),
-                                                             snr_back_2_roof_room: snr_back.get(1).copied(),
-                                                         };
-
-                                                         if snr_towards.len() >= 2 && snr_back.len() >= 2 {
-                                                             println!("--- SNR DATA (Roof <-> Mtn) ---");
-                                                             println!("Roof -> Mtn : {:.2} dB", snr_towards[1]);
-                                                             println!("Mtn  -> Roof: {:.2} dB", snr_back[0]);
-                                                             println!("-----------------------------");
-                                                         }
-
-                                                         if let Err(e) = self.append_csv_record(&record) {
-                                                             println!("Error writing CSV: {}", e);
-                                                         } else {
-                                                             println!("Data saved to CSV.");
-                                                         }
-
-                                                     } else {
-                                                          println!("❌ VALIDATION FAIL: Route does NOT contain configured Roof Node ({})", roof_id_str);
-                                                     }
-                                                 } else {
-                                                     println!("SNR Towards: {:?}", snr_towards);
-                                                     println!("SNR Back: {:?}", snr_back);
-                                                 }
+                                                    if let Err(e) = self.append_csv_record(&record) {
+                                                        println!("Error writing CSV: {}", e);
+                                                    } else {
+                                                        println!("Data saved to CSV.");
+                                                    }
+                                                } else {
+                                                    println!("SNR Towards: {:?}", snr_towards);
+                                                    println!("SNR Back: {:?}", snr_back);
+                                                }
 
                                                  use std::io::Write;
                                                  let _ = std::io::stdout().flush();
@@ -736,6 +764,78 @@ impl Engine {
             lna_on_samples: self.stats_lna_on.samples,
             lna_on_roof_to_mtn: self.stats_lna_on.average_roof_to_mtn(),
             lna_on_mtn_to_roof: self.stats_lna_on.average_mtn_to_roof(),
+        }
+    }
+
+    fn validate_relay_route(
+        route: &[u32],
+        local_id: Option<u32>,
+        roof_id: u32,
+        mountain_id: u32,
+    ) -> Result<(), String> {
+        if route.len() != 3 {
+            return Err(format!(
+                "expected exactly 3 nodes (Local -> Roof -> Mountain) but received {}",
+                route.len()
+            ));
+        }
+
+        if let Some(local_val) = local_id {
+            if route[0] != local_val {
+                return Err(format!(
+                    "route start {:08x} does not match Local {:08x}",
+                    route[0],
+                    local_val
+                ));
+            }
+        }
+
+        if route[1] != roof_id {
+            return Err(format!(
+                "route hop[1] {:08x} does not match Roof {:08x}",
+                route[1],
+                roof_id
+            ));
+        }
+
+        if route[2] != mountain_id {
+            return Err(format!(
+                "route destination {:08x} does not match Mountain {:08x}",
+                route[2],
+                mountain_id
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn parse_configured_node_u32(node_id: &Option<String>) -> Option<u32> {
+        node_id
+            .as_deref()
+            .and_then(Self::parse_node_id_str)
+    }
+
+    fn parse_node_id_str(node_id: &str) -> Option<u32> {
+        if node_id.is_empty() {
+            return None;
+        }
+
+        if let Some(stripped) = node_id.strip_prefix('!') {
+            u32::from_str_radix(stripped, 16).ok()
+        } else if let Some(stripped) = node_id
+            .strip_prefix("0x")
+            .or_else(|| node_id.strip_prefix("0X"))
+        {
+            u32::from_str_radix(stripped, 16).ok()
+        } else {
+            node_id.parse::<u32>().ok()
+        }
+    }
+
+    fn format_node_id(id: Option<u32>) -> String {
+        match id {
+            Some(value) => format!("!{:08x}", value),
+            None => "unknown".to_string(),
         }
     }
 
