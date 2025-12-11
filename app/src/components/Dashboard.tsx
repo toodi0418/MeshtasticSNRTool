@@ -12,6 +12,7 @@ interface Props {
 export const Dashboard: React.FC<Props> = ({ progress, logs, resetToken }) => {
     const [history, setHistory] = useState<SignalData[]>([]);
     const logWindowRef = useRef<HTMLDivElement | null>(null);
+    const [isLogPinned, setIsLogPinned] = useState(true);
 
     useEffect(() => {
         const snrTowards = progress.snr_towards;
@@ -39,13 +40,25 @@ export const Dashboard: React.FC<Props> = ({ progress, logs, resetToken }) => {
             return;
         }
 
-        const distanceFromBottom =
-            container.scrollHeight - (container.scrollTop + container.clientHeight);
-        const threshold = 60; // px
-        if (distanceFromBottom <= threshold) {
-            container.scrollTop = container.scrollHeight;
-        }
-    }, [logs]);
+        const handleScroll = () => {
+            const distance =
+                container.scrollHeight - (container.scrollTop + container.clientHeight);
+            setIsLogPinned(distance < 60);
+        };
+
+        handleScroll();
+        container.addEventListener('scroll', handleScroll);
+        return () => {
+            container.removeEventListener('scroll', handleScroll);
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!isLogPinned) return;
+        const container = logWindowRef.current;
+        if (!container) return;
+        container.scrollTop = container.scrollHeight;
+    }, [logs, isLogPinned]);
 
     const formatTime = (secs: number) => {
         const m = Math.floor(secs / 60);
