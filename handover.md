@@ -138,3 +138,4 @@ npm run tauri dev
 - 2025-12-11：GUI System Logs 現在顯示核心程式的 console 輸出，不再塞入 Cycle 進度訊息，並透過新事件 `console-log` 與 logging callback 同步。
 - 2025-12-11：測試完成後會彈出結算視窗，依據最後的平均統計顯示 LNA ON/OFF 的 SNR 及差值，方便立即檢視成果。
 - 2025-12-11：System Logs 若滾動條已在底部會自動跟隨最新訊息，使用者手動往上翻閱時則不強制跳動。
+- 2025-12-11：最新 macOS 版本（commit 52abe31 之後）已以 `npm run tauri build` 完成打包，輸出位於 `target/release/bundle/macos/app.app` 與 `target/release/bundle/dmg/app_0.1.0_x64.dmg`。
