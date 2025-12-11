@@ -41,7 +41,7 @@ use meshtastic::packet::PacketReceiver;
 #[async_trait]
 impl Transport for SerialTransport {
     async fn connect(&mut self) -> Result<PacketReceiver> {
-        println!("Opening serial port {}", self.port_name);
+        msnr_log!("Opening serial port {}", self.port_name);
 
         let port = tokio_serial::new(&self.port_name, self.baud_rate).open_native_async()?;
 
@@ -58,7 +58,7 @@ impl Transport for SerialTransport {
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        println!("Closing serial port {}", self.port_name);
+        msnr_log!("Closing serial port {}", self.port_name);
         if let Some(api) = self.api.take() {
             api.disconnect().await?;
         }
@@ -77,7 +77,7 @@ impl Transport for SerialTransport {
 
     async fn set_lna(&mut self, node_id: &str, enable: bool) -> Result<()> {
         if let Some(api) = &mut self.api {
-            println!("Setting LNA for {} to {}", node_id, enable);
+            msnr_log!("Setting LNA for {} to {}", node_id, enable);
 
             // Construct HardwareMessage to toggle GPIO
             // Assuming LNA is on GPIO 1 (needs configuration)
@@ -167,7 +167,7 @@ impl Transport for SerialTransport {
 
     async fn run_traceroute(&mut self, target_node_id: &str) -> Result<Vec<TracerouteResult>> {
         if let Some(api) = &mut self.api {
-            println!("Sending Traceroute to {}", target_node_id);
+            msnr_log!("Sending Traceroute to {}", target_node_id);
 
             let dest = if target_node_id.starts_with('!') {
                 u32::from_str_radix(&target_node_id[1..], 16).unwrap_or(u32::MAX)

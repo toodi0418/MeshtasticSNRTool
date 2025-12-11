@@ -44,7 +44,6 @@ function App() {
   useEffect(() => {
     const unlisten = listen<ProgressState>('test-progress', (event) => {
       setProgress(event.payload);
-      setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${event.payload.status_message}`].slice(-100));
     });
 
     const unlistenComplete = listen('test-complete', () => {
@@ -56,10 +55,15 @@ function App() {
       setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error: ${event.payload}`]);
     });
 
+    const unlistenConsole = listen<string>('console-log', (event) => {
+      setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${event.payload}`].slice(-100));
+    });
+
     return () => {
       unlisten.then(f => f());
       unlistenComplete.then(f => f());
       unlistenError.then(f => f());
+      unlistenConsole.then(f => f());
     };
   }, []);
 

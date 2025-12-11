@@ -1,4 +1,6 @@
-use msnr_core::{Config, Engine, IpTransport, SerialTransport, Transport, TransportMode};
+use msnr_core::{
+    set_log_callback, Config, Engine, IpTransport, SerialTransport, Transport, TransportMode,
+};
 use std::sync::Arc;
 use tauri::{Emitter, State};
 use tokio::sync::Mutex as AsyncMutex;
@@ -43,6 +45,13 @@ async fn start_test(
             Box::new(IpTransport::new(ip, port))
         }
     };
+
+    {
+        let console_handle = app_handle.clone();
+        set_log_callback(Arc::new(move |line| {
+            let _ = console_handle.emit("console-log", line.clone());
+        }));
+    }
 
     let mut engine = Engine::new(config, transport_impl);
     let app_handle_clone = app_handle.clone();

@@ -115,10 +115,10 @@ impl Engine {
         let priv_key_b64 = "EP7uGaSlaoJHVp5wYVzv5O6fQQNx+q8yb9OshyMANmU=";
         use base64::Engine;
         if let Ok(priv_bytes) = base64::prelude::BASE64_STANDARD.decode(priv_key_b64) {
-            println!("Injecting User Identity (Client-Side Signing)...");
+            msnr_log!("Injecting User Identity (Client-Side Signing)...");
             self.transport.set_identity(priv_bytes).await;
         } else {
-            println!("Error decoding private key!");
+            msnr_log!("Error decoding private key!");
         }
 
         let total_cycles = self.config.cycles;
@@ -130,7 +130,7 @@ impl Engine {
             // Toggle LNA OFF
             // Toggle LNA OFF
             if let Err(e) = self.set_lna_mode(&mut rx, false).await {
-                eprintln!("Error setting LNA OFF: {}", e);
+                emsnr_log!("Error setting LNA OFF: {}", e);
                 return Err(e); // Abort test
             }
             // Wait for settling
@@ -155,7 +155,7 @@ impl Engine {
             // Toggle LNA ON
             // Toggle LNA ON
             if let Err(e) = self.set_lna_mode(&mut rx, true).await {
-                eprintln!("Error setting LNA ON: {}", e);
+                emsnr_log!("Error setting LNA ON: {}", e);
                 return Err(e); // Abort test
             }
             // Wait for settling
@@ -190,7 +190,7 @@ impl Engine {
         });
 
         if let Err(e) = self.transport.disconnect().await {
-            println!("Warning: Failed to disconnect cleanly: {e}");
+            msnr_log!("Warning: Failed to disconnect cleanly: {e}");
         }
         Ok(())
     }
@@ -216,7 +216,7 @@ impl Engine {
             target_node.parse::<u32>().unwrap_or(0)
         };
 
-        println!("Fetching Local Node Info...");
+        msnr_log!("Fetching Local Node Info...");
         let owner_req = AdminMessage {
             payload_variant: Some(admin_message::PayloadVariant::GetOwnerRequest(true)),
             ..Default::default()
@@ -227,7 +227,7 @@ impl Engine {
         let info_start = Instant::now();
         loop {
             if info_start.elapsed() > info_timeout {
-                println!("Warning: Could not fetch local node info.");
+                msnr_log!("Warning: Could not fetch local node info.");
                 break;
             }
             let sleep = tokio::time::sleep(Duration::from_millis(100));
@@ -240,8 +240,8 @@ impl Engine {
                                 if portnum == PortNum::AdminApp as i32 {
                                     if let Ok(admin_rsp) = AdminMessage::decode(payload.as_slice()) {
                                             if let Some(admin_message::PayloadVariant::GetOwnerResponse(user)) = admin_rsp.payload_variant {
-                                                println!("Local Node Identity: ID: {}, LongName: {}, ShortName: {}", user.id, user.long_name, user.short_name);
-                                                println!("> Please ensure THIS ID ({}) is in the Roof Node's Admin List.", user.id);
+                                                msnr_log!("Local Node Identity: ID: {}, LongName: {}, ShortName: {}", user.id, user.long_name, user.short_name);
+                                                msnr_log!("> Please ensure THIS ID ({}) is in the Roof Node's Admin List.", user.id);
 
                                                 break;
                                             }
@@ -255,7 +255,7 @@ impl Engine {
             }
         }
 
-        println!("Requesting LoRa Config from {}...", target_node);
+        msnr_log!("Requesting LoRa Config from {}...", target_node);
 
         if !self.has_session_key(&target_node) {
             let session_req = AdminMessage {
@@ -286,7 +286,7 @@ impl Engine {
                     "WARNING: Get Config timed out for {}! Aborting LNA Toggle.",
                     target_node
                 );
-                println!("{}", msg);
+                msnr_log!("{}", msg);
                 return Err(anyhow::anyhow!(msg));
             }
 
@@ -306,7 +306,7 @@ impl Engine {
                                              if let Ok(admin_msg) = AdminMessage::decode(payload.as_slice()) {
                                                  if let Some(admin_message::PayloadVariant::GetConfigResponse(config)) = admin_msg.payload_variant {
                                                      if let Some(config::PayloadVariant::Lora(lora)) = config.payload_variant {
-                                                         println!("Received LoRa Config. Current RX Gain: {:?}", lora.sx126x_rx_boosted_gain);
+                                                         msnr_log!("Received LoRa Config. Current RX Gain: {:?}", lora.sx126x_rx_boosted_gain);
                                                          current_lora_config = Some(lora);
                                                          break;
                                                      }
@@ -325,7 +325,7 @@ impl Engine {
         }
 
         if let Some(mut lora) = current_lora_config {
-            println!("Setting LNA (RX Boosted Gain) to {}...", enable);
+            msnr_log!("Setting LNA (RX Boosted Gain) to {}...", enable);
             lora.sx126x_rx_boosted_gain = enable;
 
             let set_req = AdminMessage {
@@ -338,15 +338,15 @@ impl Engine {
             let mut success = false;
 
             for attempt in 1..=10 {
-                println!("Attempt {}/10: Setting LNA...", attempt);
+                msnr_log!("Attempt {}/10: Setting LNA...", attempt);
                 self.send_admin_with_session(&target_node, &set_req).await?;
-                println!("Set Config Request sent (PKI Encrypted). Waiting for ACK/Response...");
+                msnr_log!("Set Config Request sent (PKI Encrypted). Waiting for ACK/Response...");
 
                 let ack_start = Instant::now();
                 let ack_timeout = Duration::from_secs(3);
                 loop {
                     if ack_start.elapsed() > ack_timeout {
-                        println!(
+                        msnr_log!(
                             "Wait for SetACK timed out (This is normal if node is silent on success)."
                         );
                         break;
@@ -360,10 +360,10 @@ impl Engine {
                                     if let Some(meshtastic::protobufs::from_radio::PayloadVariant::Packet(mesh_packet)) = packet.payload_variant {
                                         if mesh_packet.from == target_id {
                                             if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(meshtastic::protobufs::Data { portnum, payload, .. })) = mesh_packet.payload_variant {
-                                                println!("Received packet from target on port {}: {:02X?}", portnum, payload);
+                                                msnr_log!("Received packet from target on port {}: {:02X?}", portnum, payload);
                                                 if portnum == PortNum::AdminApp as i32 {
                                                     if let Ok(admin_msg) = AdminMessage::decode(payload.as_slice()) {
-                                                        println!("AdminMessage Response: {:?}", admin_msg.payload_variant);
+                                                        msnr_log!("AdminMessage Response: {:?}", admin_msg.payload_variant);
                                                     }
                                                 }
                                             }
@@ -377,7 +377,7 @@ impl Engine {
                     }
                 }
 
-                println!("Verifying...");
+                msnr_log!("Verifying...");
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 self.send_admin_with_session(&target_node, &get_req).await?;
 
@@ -386,7 +386,7 @@ impl Engine {
 
                 loop {
                     if verify_start.elapsed() > timeout {
-                        println!(
+                        msnr_log!(
                             "WARNING: Verification Read Timed Out! (Attempt {})",
                             attempt
                         );
@@ -410,10 +410,10 @@ impl Engine {
                                                          if let Some(admin_message::PayloadVariant::GetConfigResponse(config)) = admin_msg.payload_variant {
                                                              if let Some(config::PayloadVariant::Lora(lora)) = config.payload_variant {
                                                                  if lora.sx126x_rx_boosted_gain == enable {
-                                                                     println!("✅ LNA Setting VERIFIED! (Current: {})", lora.sx126x_rx_boosted_gain);
+                                                                     msnr_log!("✅ LNA Setting VERIFIED! (Current: {})", lora.sx126x_rx_boosted_gain);
                                                                      verified = true;
                                                                  } else {
-                                                                     println!("❌ LNA Verification FAILED! (Expected: {}, Got: {})", enable, lora.sx126x_rx_boosted_gain);
+                                                                     msnr_log!("❌ LNA Verification FAILED! (Expected: {}, Got: {})", enable, lora.sx126x_rx_boosted_gain);
                                                                  }
                                                                  break;
                                                              }
@@ -435,7 +435,7 @@ impl Engine {
                     success = true;
                     break;
                 } else {
-                    println!("⚠️ Attempt {} failed. Retrying...", attempt);
+                    msnr_log!("⚠️ Attempt {} failed. Retrying...", attempt);
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
             }
@@ -445,7 +445,7 @@ impl Engine {
                     "CRITICAL ERROR: Failed to toggle LNA to {} after 10 attempts! Aborting test.",
                     enable
                 );
-                println!("{}", err_msg);
+                msnr_log!("{}", err_msg);
                 return Err(anyhow::anyhow!(err_msg));
             }
         }
@@ -509,7 +509,7 @@ impl Engine {
         // Consume the first tick
         interval.tick().await;
 
-        println!("Engine started. Config: {:?}", self.config);
+        msnr_log!("Engine started. Config: {:?}", self.config);
         use std::io::Write;
         let _ = std::io::stdout().flush();
 
@@ -558,7 +558,7 @@ impl Engine {
 
                          if !target.is_empty() {
                              if let Err(e) = self.transport.run_traceroute(&target).await {
-                                 println!("Error sending traceroute: {}", e);
+                                 msnr_log!("Error sending traceroute: {}", e);
                              }
                          }
                     }
@@ -576,14 +576,14 @@ impl Engine {
                                      if portnum == PortNum::TracerouteApp as i32 {
                                          match RouteDiscovery::decode(&payload[..]) {
                                             Ok(route_discovery) => {
-                                                println!("TRACEROUTE RESPONSE RECEIVED! ({})", phase_name);
+                                                msnr_log!("TRACEROUTE RESPONSE RECEIVED! ({})", phase_name);
 
                                                 let snr_towards: Vec<f32> = route_discovery.snr_towards.iter().map(|&x| x as f32 / 4.0).collect();
                                                 let snr_back: Vec<f32> = route_discovery.snr_back.iter().map(|&x| x as f32 / 4.0).collect();
 
                                                  let hit_floor = snr_towards.iter().chain(snr_back.iter()).any(|value| (*value + 32.0).abs() < f32::EPSILON);
                                                  if hit_floor {
-                                                     println!("Skipping traceroute sample (SNR hit -32 dB floor).");
+                                                     msnr_log!("Skipping traceroute sample (SNR hit -32 dB floor).");
                                                      continue;
                                                  }
 
@@ -594,20 +594,20 @@ impl Engine {
                                                     let roof_id = match Self::parse_configured_node_u32(&self.config.roof_node_id) {
                                                         Some(id) => id,
                                                         None => {
-                                                            println!("❌ VALIDATION FAIL: Roof node ID is not configured, discarding sample.");
+                                                            msnr_log!("❌ VALIDATION FAIL: Roof node ID is not configured, discarding sample.");
                                                             continue;
                                                         }
                                                     };
 
                                                     match Self::validate_relay_route(&route_discovery.route, roof_id) {
                                                         Ok(RouteValidationOutcome::RoofOnly) => {
-                                                            println!(
+                                                            msnr_log!(
                                                                 "✅ VALIDATION PASS: Route reports single-hop via Roof({}), as required.",
                                                                 Self::format_node_id(Some(roof_id))
                                                             );
                                                         }
                                                         Err(reason) => {
-                                                            println!(
+                                                            msnr_log!(
                                                                 "❌ VALIDATION FAIL: {} | Route {:?}",
                                                                 reason,
                                                                 route_discovery.route
@@ -651,33 +651,33 @@ impl Engine {
                                                     };
 
                                                     if snr_towards.len() >= 2 && snr_back.len() >= 2 {
-                                                        println!("--- SNR DATA (Roof <-> Mtn) ---");
-                                                        println!("Roof -> Mtn : {:.2} dB", snr_towards[1]);
-                                                        println!("Mtn  -> Roof: {:.2} dB", snr_back[0]);
-                                                        println!("-----------------------------");
+                                                        msnr_log!("--- SNR DATA (Roof <-> Mtn) ---");
+                                                        msnr_log!("Roof -> Mtn : {:.2} dB", snr_towards[1]);
+                                                        msnr_log!("Mtn  -> Roof: {:.2} dB", snr_back[0]);
+                                                        msnr_log!("-----------------------------");
                                                     }
 
                                                     if let Err(e) = self.append_csv_record(&record) {
-                                                        println!("Error writing CSV: {}", e);
+                                                        msnr_log!("Error writing CSV: {}", e);
                                                     } else {
-                                                        println!("Data saved to CSV.");
+                                                        msnr_log!("Data saved to CSV.");
                                                     }
                                                 } else {
-                                                    println!("SNR Towards: {:?}", snr_towards);
-                                                    println!("SNR Back: {:?}", snr_back);
+                                                    msnr_log!("SNR Towards: {:?}", snr_towards);
+                                                    msnr_log!("SNR Back: {:?}", snr_back);
                                                 }
 
                                                  use std::io::Write;
                                                  let _ = std::io::stdout().flush();
                                              }
-                                             Err(e) => println!("Failed to decode RouteDiscovery: {}", e),
+                                             Err(e) => msnr_log!("Failed to decode RouteDiscovery: {}", e),
                                          }
                                      }
                                 }
                             }
                         }
                         None => {
-                            println!("Transport channel closed unexpectedly.");
+                            msnr_log!("Transport channel closed unexpectedly.");
                             break;
                         }
                     }
@@ -705,24 +705,25 @@ impl Engine {
 
     fn log_average_summary(&self) {
         let stats = self.current_average_stats();
-        println!("================ LNA Comparison Summary ================");
-        println!(
+        msnr_log!("================ LNA Comparison Summary ================");
+        msnr_log!(
             "Samples - LNA OFF: {}, LNA ON: {}",
-            stats.lna_off_samples, stats.lna_on_samples
+            stats.lna_off_samples,
+            stats.lna_on_samples
         );
-        println!(
+        msnr_log!(
             "Roof -> Mountain (avg) | OFF: {} dB | ON: {} dB | Δ: {} dB",
             display_opt(stats.lna_off_roof_to_mtn),
             display_opt(stats.lna_on_roof_to_mtn),
             display_opt(stats.delta_roof_to_mtn())
         );
-        println!(
+        msnr_log!(
             "Mountain -> Roof (avg) | OFF: {} dB | ON: {} dB | Δ: {} dB",
             display_opt(stats.lna_off_mtn_to_roof),
             display_opt(stats.lna_on_mtn_to_roof),
             display_opt(stats.delta_mtn_to_roof())
         );
-        println!("========================================================");
+        msnr_log!("========================================================");
 
         fn display_opt(val: Option<f32>) -> String {
             val.map(|v| format!("{:.2}", v))
@@ -775,8 +776,7 @@ impl Engine {
         if hop != roof_id {
             return Err(format!(
                 "single-hop route {:08x} does not match configured Roof {:08x}",
-                hop,
-                roof_id
+                hop, roof_id
             ));
         }
 
@@ -784,9 +784,7 @@ impl Engine {
     }
 
     fn parse_configured_node_u32(node_id: &Option<String>) -> Option<u32> {
-        node_id
-            .as_deref()
-            .and_then(Self::parse_node_id_str)
+        node_id.as_deref().and_then(Self::parse_node_id_str)
     }
 
     fn parse_node_id_str(node_id: &str) -> Option<u32> {
@@ -849,7 +847,7 @@ impl Engine {
         }
         let normalized = Self::format_node_from_u32(node_num);
         if !self.session_keys.contains_key(&normalized) {
-            println!("Stored session key for node {}", normalized);
+            msnr_log!("Stored session key for node {}", normalized);
         }
         self.session_keys.insert(normalized, key.to_vec());
     }

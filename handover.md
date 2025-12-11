@@ -135,3 +135,4 @@ npm run tauri dev
 - 2025-12-11：移除 Engine 層級的 `Sending traceroute` log，僅保留 transport 端輸出，避免 CLI 出現兩行重複訊息。
 - 2025-12-11：Relay 模式路徑驗證調整為「若 route metadata 只有 1 hop，該 hop 必須是 Roof 才通過；否則需符合 Local → Roof → Mountain 的完整鏈路」，仍會針對缺漏節點提出警告。
 - 2025-12-11：預設採樣參數改為 Interval 30 秒、Phase 7.5 分鐘（單一 Cycle 約 15 分鐘），確保每輪能累積足夠樣本但仍維持總測試時間可控。
+- 2025-12-11：GUI System Logs 現在顯示核心程式的 console 輸出，不再塞入 Cycle 進度訊息，並透過新事件 `console-log` 與 logging callback 同步。

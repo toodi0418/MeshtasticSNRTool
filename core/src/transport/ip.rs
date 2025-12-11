@@ -42,12 +42,12 @@ use meshtastic::packet::PacketReceiver;
 impl Transport for IpTransport {
     async fn connect(&mut self) -> Result<PacketReceiver> {
         let addr = format!("{}:{}", self.ip, self.port);
-        println!("Connecting to {}... (Timeout 10s)", addr);
+        msnr_log!("Connecting to {}... (Timeout 10s)", addr);
         // Add timeout to connect
         let stream =
             tokio::time::timeout(std::time::Duration::from_secs(10), TcpStream::connect(addr))
                 .await??;
-        println!("TCP Connected!");
+        msnr_log!("TCP Connected!");
 
         let stream_handle = StreamHandle::from_stream(stream);
 
@@ -63,7 +63,7 @@ impl Transport for IpTransport {
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        println!("Disconnecting from {}:{}", self.ip, self.port);
+        msnr_log!("Disconnecting from {}:{}", self.ip, self.port);
         if let Some(api) = self.api.take() {
             api.disconnect().await?;
         }
@@ -72,7 +72,7 @@ impl Transport for IpTransport {
 
     async fn set_lna(&mut self, node_id: &str, enable: bool) -> Result<()> {
         if let Some(api) = &mut self.api {
-            println!("Setting LNA for {} to {}", node_id, enable);
+            msnr_log!("Setting LNA for {} to {}", node_id, enable);
 
             // Construct HardwareMessage to toggle GPIO
             // Assuming LNA is on GPIO 1 (needs configuration)
@@ -203,7 +203,7 @@ impl Transport for IpTransport {
                 payload_variant: Some(to_radio::PayloadVariant::Packet(mesh_packet)),
             };
 
-            println!("Sending Admin PKI Packet to {}", dest_str);
+            msnr_log!("Sending Admin PKI Packet to {}", dest_str);
             api.send_to_radio_packet(to_radio.payload_variant).await?;
             Ok(())
         } else {
@@ -213,7 +213,7 @@ impl Transport for IpTransport {
 
     async fn run_traceroute(&mut self, target_node_id: &str) -> Result<Vec<TracerouteResult>> {
         if let Some(api) = &mut self.api {
-            println!("Sending Traceroute to {}", target_node_id);
+            msnr_log!("Sending Traceroute to {}", target_node_id);
 
             let dest = if target_node_id.starts_with('!') {
                 u32::from_str_radix(&target_node_id[1..], 16).unwrap_or(u32::MAX)
