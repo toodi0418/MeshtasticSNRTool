@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{Config, LnaControlTarget};
 use crate::transport::Transport;
 use crate::{msnr_log, msnr_log_err};
 use anyhow::Result;
@@ -201,15 +201,13 @@ impl Engine {
         rx: &mut meshtastic::packet::PacketReceiver,
         enable: bool,
     ) -> Result<()> {
-        let target_node = match self.config.topology {
-            crate::config::Topology::Relay => self.config.roof_node_id.clone(),
-            crate::config::Topology::Direct => self.config.target_node_id.clone(),
-        }
-        .unwrap_or_default();
-
-        if target_node.is_empty() {
-            return Ok(());
-        }
+        let target_node = match self.resolve_lna_control_node() {
+            Some(node) if !node.is_empty() => node,
+            _ => {
+                msnr_log!("LNA control disabled or missing target node, skipping toggle.");
+                return Ok(());
+            }
+        };
 
         let target_id = if target_node.starts_with('!') {
             u32::from_str_radix(&target_node[1..], 16).unwrap_or(0)
@@ -686,6 +684,20 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    fn resolve_lna_control_node(&self) -> Option<String> {
+        match self.config.topology {
+            crate::config::Topology::Relay => match self.config.lna_control_target {
+                LnaControlTarget::Disabled => None,
+                LnaControlTarget::Roof => self.config.roof_node_id.clone(),
+                LnaControlTarget::Mountain => self.config.mountain_node_id.clone(),
+            },
+            crate::config::Topology::Direct => match self.config.lna_control_target {
+                LnaControlTarget::Disabled => None,
+                _ => self.config.target_node_id.clone(),
+            },
+        }
     }
 }
 

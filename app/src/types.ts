@@ -14,6 +14,7 @@ export interface Config {
     local_node_id?: string;
     roof_node_id?: string;
     mountain_node_id?: string;
+    lna_control_target: 'Disabled' | 'Roof' | 'Mountain';
 }
 
 export interface ProgressState {

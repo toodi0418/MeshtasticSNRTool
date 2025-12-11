@@ -1,6 +1,9 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use msnr_core::{Config, Engine, IpTransport, SerialTransport, Transport, TransportMode};
+use msnr_core::{
+    Config, Engine, IpTransport, SerialTransport, Transport, TransportMode,
+    config::LnaControlTarget,
+};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -57,6 +60,10 @@ enum Commands {
         /// Traceroute Interval in seconds
         #[arg(long, default_value_t = 45)]
         interval: u64,
+
+        /// LNA control target (none, roof, mountain)
+        #[arg(long, default_value = "roof", value_parser = ["none", "roof", "mountain"])]
+        lna_target: String,
     },
 }
 
@@ -78,6 +85,7 @@ async fn main() -> Result<()> {
             duration,
             cycles,
             interval,
+            lna_target,
         }) => {
             println!("Starting MSNR Tool CLI...");
             use std::io::Write;
@@ -89,6 +97,13 @@ async fn main() -> Result<()> {
             config.phase_duration_ms = duration * 1000;
             config.cycles = *cycles;
             config.interval_ms = interval * 1000;
+
+            let lna_target_value = lna_target.to_lowercase();
+            config.lna_control_target = match lna_target_value.as_str() {
+                "none" => LnaControlTarget::Disabled,
+                "mountain" => LnaControlTarget::Mountain,
+                _ => LnaControlTarget::Roof,
+            };
 
             // Set Node IDs
             config.target_node_id = target.clone();

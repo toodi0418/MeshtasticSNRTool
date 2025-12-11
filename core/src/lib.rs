@@ -3,7 +3,7 @@ pub mod engine;
 pub mod logging;
 pub mod transport;
 
-pub use config::{Config, TransportMode};
+pub use config::{Config, LnaControlTarget, TransportMode};
 pub use engine::{Engine, ProgressState};
 pub use logging::{clear_log_callback, set_log_callback};
 pub use transport::{IpTransport, SerialTransport, Transport};

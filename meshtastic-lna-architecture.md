@@ -152,6 +152,7 @@
      - `roof_node_id`
      - `mountain_node_id`
      - `target_node_id`（直連用）
+     - `lna_control_target`：Relay 模式可指定 `Disabled` / `Roof` / `Mountain` 來決定要不要遠端切換哪顆 LNA
    - 輸出設定：
      - `output_path`
      - `output_format`（csv / json 等）

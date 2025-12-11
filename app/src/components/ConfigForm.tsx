@@ -141,6 +141,18 @@ export const ConfigForm: React.FC<Props> = ({ config, setConfig, isRunning, onSt
                             disabled={isRunning}
                         />
                     </div>
+                    <div className="form-group">
+                        <label>LNA 控制目標</label>
+                        <select
+                            value={config.lna_control_target}
+                            onChange={(e) => handleChange('lna_control_target', e.target.value)}
+                            disabled={isRunning}
+                        >
+                            <option value="Disabled">不控制</option>
+                            <option value="Roof">控制頂樓節點</option>
+                            <option value="Mountain">控制山上節點</option>
+                        </select>
+                    </div>
                 </>
             )}
 

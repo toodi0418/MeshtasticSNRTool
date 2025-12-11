@@ -39,6 +39,13 @@ pub enum OutputFormat {
     Json,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum LnaControlTarget {
+    Disabled,
+    Roof,
+    Mountain,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     // Connection
@@ -63,6 +70,9 @@ pub struct Config {
     pub mountain_node_id: Option<String>,
     pub target_node_id: Option<String>,
 
+    // LNA Control
+    pub lna_control_target: LnaControlTarget,
+
     // Output
     pub output_path: String,
     pub output_format: OutputFormat,
@@ -85,6 +95,7 @@ impl Default for Config {
             roof_node_id: None,
             mountain_node_id: None,
             target_node_id: None,
+            lna_control_target: LnaControlTarget::Roof,
             output_path: "results.csv".to_string(),
             output_format: OutputFormat::Csv,
         }

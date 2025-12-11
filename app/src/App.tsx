@@ -33,7 +33,8 @@ function App() {
     output_format: 'Csv',
     roof_node_id: '!867263da',
     mountain_node_id: '!550d885b',
-    target_node_id: '' // User can fill this
+    target_node_id: '', // User can fill this
+    lna_control_target: 'Roof',
   });
 
   const [isRunning, setIsRunning] = useState(false);
