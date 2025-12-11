@@ -609,9 +609,9 @@ impl Engine {
                                                         }
                                                         Err(reason) => {
                                                             msnr_log!(
-                                                                "❌ VALIDATION FAIL: {} | Route {:?}",
+                                                                "❌ VALIDATION FAIL: {} | Route {}",
                                                                 reason,
-                                                                route_discovery.route
+                                                                Self::format_route(&route_discovery.route)
                                                             );
                                                             continue;
                                                         }
@@ -766,18 +766,19 @@ impl Engine {
 
         if route.len() != 1 {
             return Err(format!(
-                "expected single-hop route via Roof ({}) but received {} hop(s): {:?}",
+                "expected single-hop route via Roof ({}) but received {} hop(s): {}",
                 Self::format_node_id(Some(roof_id)),
                 route.len(),
-                route
+                Self::format_route(route)
             ));
         }
 
         let hop = route[0];
         if hop != roof_id {
             return Err(format!(
-                "single-hop route {:08x} does not match configured Roof {:08x}",
-                hop, roof_id
+                "single-hop route {} does not match configured Roof {}",
+                Self::format_node_id(Some(hop)),
+                Self::format_node_id(Some(roof_id))
             ));
         }
 
@@ -810,6 +811,17 @@ impl Engine {
             Some(value) => format!("!{:08x}", value),
             None => "unknown".to_string(),
         }
+    }
+
+    fn format_route(route: &[u32]) -> String {
+        if route.is_empty() {
+            return "[]".to_string();
+        }
+        let parts: Vec<String> = route
+            .iter()
+            .map(|node| Self::format_node_id(Some(*node)))
+            .collect();
+        format!("[{}]", parts.join(", "))
     }
 
     fn normalized_node_id(node_id: &str) -> Option<String> {
