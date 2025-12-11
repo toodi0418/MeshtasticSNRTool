@@ -137,3 +137,4 @@ npm run tauri dev
 - 2025-12-11：預設採樣參數改為 Interval 30 秒、Phase 7.5 分鐘（單一 Cycle 約 15 分鐘），確保每輪能累積足夠樣本但仍維持總測試時間可控。
 - 2025-12-11：GUI System Logs 現在顯示核心程式的 console 輸出，不再塞入 Cycle 進度訊息，並透過新事件 `console-log` 與 logging callback 同步。
 - 2025-12-11：測試完成後會彈出結算視窗，依據最後的平均統計顯示 LNA ON/OFF 的 SNR 及差值，方便立即檢視成果。
+- 2025-12-11：System Logs 若滾動條已在底部會自動跟隨最新訊息，使用者手動往上翻閱時則不強制跳動。

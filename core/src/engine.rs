@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::transport::Transport;
+use crate::{msnr_log, msnr_log_err};
 use anyhow::Result;
 use meshtastic::protobufs::{AdminMessage, Config as MeshConfig, PortNum, admin_message, config};
 use prost::Message;
@@ -130,7 +131,7 @@ impl Engine {
             // Toggle LNA OFF
             // Toggle LNA OFF
             if let Err(e) = self.set_lna_mode(&mut rx, false).await {
-                emsnr_log!("Error setting LNA OFF: {}", e);
+                msnr_log_err!("Error setting LNA OFF: {}", e);
                 return Err(e); // Abort test
             }
             // Wait for settling
@@ -155,7 +156,7 @@ impl Engine {
             // Toggle LNA ON
             // Toggle LNA ON
             if let Err(e) = self.set_lna_mode(&mut rx, true).await {
-                emsnr_log!("Error setting LNA ON: {}", e);
+                msnr_log_err!("Error setting LNA ON: {}", e);
                 return Err(e); // Abort test
             }
             // Wait for settling

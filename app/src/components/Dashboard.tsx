@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ProgressState } from '../types';
 import { SignalChart, SignalData } from './SignalChart';
 import { Activity, Clock, Terminal } from 'lucide-react';
@@ -11,6 +11,7 @@ interface Props {
 
 export const Dashboard: React.FC<Props> = ({ progress, logs, resetToken }) => {
     const [history, setHistory] = useState<SignalData[]>([]);
+    const logWindowRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
         const snrTowards = progress.snr_towards;
@@ -31,6 +32,20 @@ export const Dashboard: React.FC<Props> = ({ progress, logs, resetToken }) => {
     useEffect(() => {
         setHistory([]);
     }, [resetToken]);
+
+    useEffect(() => {
+        const container = logWindowRef.current;
+        if (!container) {
+            return;
+        }
+
+        const distanceFromBottom =
+            container.scrollHeight - (container.scrollTop + container.clientHeight);
+        const threshold = 60; // px
+        if (distanceFromBottom <= threshold) {
+            container.scrollTop = container.scrollHeight;
+        }
+    }, [logs]);
 
     const formatTime = (secs: number) => {
         const m = Math.floor(secs / 60);
@@ -129,7 +144,7 @@ export const Dashboard: React.FC<Props> = ({ progress, logs, resetToken }) => {
                 <div className="section-header">
                     <Terminal size={18} /> <h3>System Logs</h3>
                 </div>
-                <div className="log-window">
+                <div className="log-window" ref={logWindowRef}>
                     {logs.map((log, i) => (
                         <div key={i} className="log-entry">
                             <span className="log-time">{log.substring(0, log.indexOf(']') + 1)}</span>
