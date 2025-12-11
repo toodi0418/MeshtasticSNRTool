@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant}; // For encoding/decoding
 
+const LNA_MAX_ATTEMPTS: u32 = 10;
+const LNA_WAIT_TIMEOUT_SECS: u64 = 30;
+const LNA_ACK_TIMEOUT_SECS: u64 = 30;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressState {
     pub total_progress: f32,
@@ -254,8 +258,6 @@ impl Engine {
             }
         }
 
-        msnr_log!("Requesting LoRa Config from {}...", target_node);
-
         if !self.has_session_key(&target_node) {
             let session_req = AdminMessage {
                 payload_variant: Some(admin_message::PayloadVariant::GetConfigRequest(
@@ -273,180 +275,117 @@ impl Engine {
             )),
             ..Default::default()
         };
-        self.send_admin_with_session(&target_node, &get_req).await?;
 
-        let mut current_lora_config: Option<config::LoRaConfig> = None;
-        let wait_start = Instant::now();
-        let timeout = Duration::from_secs(10);
+        let mut lora = self
+            .fetch_lora_config_with_retry(rx, &target_node, target_id, &get_req, LNA_MAX_ATTEMPTS)
+            .await?;
 
-        loop {
-            if wait_start.elapsed() > timeout {
-                let msg = format!(
-                    "WARNING: Get Config timed out for {}! Aborting LNA Toggle.",
-                    target_node
-                );
-                msnr_log!("{}", msg);
-                return Err(anyhow::anyhow!(msg));
-            }
+        msnr_log!(
+            "Received LoRa Config. Current RX Gain: {:?}",
+            lora.sx126x_rx_boosted_gain
+        );
 
-            let sleep = tokio::time::sleep(Duration::from_millis(100));
-            tokio::select! {
-                result = rx.recv() => {
-                    match result {
-                        Some(packet) => {
-                            self.remember_session_key_from_packet(&packet);
-                            use meshtastic::protobufs::{Data, PortNum};
-                            use meshtastic::protobufs::from_radio::PayloadVariant;
+        msnr_log!("Setting LNA (RX Boosted Gain) to {}...", enable);
+        lora.sx126x_rx_boosted_gain = enable;
 
-                            if let Some(PayloadVariant::Packet(mesh_packet)) = packet.payload_variant {
-                                if mesh_packet.from == target_id {
-                                     if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(Data { portnum, payload, .. })) = mesh_packet.payload_variant {
-                                         if portnum == PortNum::AdminApp as i32 {
-                                             if let Ok(admin_msg) = AdminMessage::decode(payload.as_slice()) {
-                                                 if let Some(admin_message::PayloadVariant::GetConfigResponse(config)) = admin_msg.payload_variant {
-                                                     if let Some(config::PayloadVariant::Lora(lora)) = config.payload_variant {
-                                                         msnr_log!("Received LoRa Config. Current RX Gain: {:?}", lora.sx126x_rx_boosted_gain);
-                                                         current_lora_config = Some(lora);
-                                                         break;
-                                                     }
-                                                 }
-                                             }
-                                         }
-                                     }
-                                }
-                            }
-                        }
-                        None => break,
-                    }
+        let set_req = AdminMessage {
+            payload_variant: Some(admin_message::PayloadVariant::SetConfig(MeshConfig {
+                payload_variant: Some(config::PayloadVariant::Lora(lora.clone())),
+            })),
+            ..Default::default()
+        };
+
+        let mut success = false;
+
+        for attempt in 1..=10 {
+            msnr_log!("Attempt {}/10: Setting LNA...", attempt);
+            self.send_admin_with_session(&target_node, &set_req).await?;
+            msnr_log!("Set Config Request sent (PKI Encrypted). Waiting for ACK/Response...");
+
+            let ack_start = Instant::now();
+            let ack_timeout = Duration::from_secs(LNA_ACK_TIMEOUT_SECS);
+            loop {
+                if ack_start.elapsed() > ack_timeout {
+                    msnr_log!(
+                        "Wait for SetACK timed out (This is normal if node is silent on success)."
+                    );
+                    break;
                 }
-                _ = sleep => {}
-            }
-        }
-
-        if let Some(mut lora) = current_lora_config {
-            msnr_log!("Setting LNA (RX Boosted Gain) to {}...", enable);
-            lora.sx126x_rx_boosted_gain = enable;
-
-            let set_req = AdminMessage {
-                payload_variant: Some(admin_message::PayloadVariant::SetConfig(MeshConfig {
-                    payload_variant: Some(config::PayloadVariant::Lora(lora.clone())),
-                })),
-                ..Default::default()
-            };
-
-            let mut success = false;
-
-            for attempt in 1..=10 {
-                msnr_log!("Attempt {}/10: Setting LNA...", attempt);
-                self.send_admin_with_session(&target_node, &set_req).await?;
-                msnr_log!("Set Config Request sent (PKI Encrypted). Waiting for ACK/Response...");
-
-                let ack_start = Instant::now();
-                let ack_timeout = Duration::from_secs(3);
-                loop {
-                    if ack_start.elapsed() > ack_timeout {
-                        msnr_log!(
-                            "Wait for SetACK timed out (This is normal if node is silent on success)."
-                        );
-                        break;
-                    }
-                    let sleep = tokio::time::sleep(Duration::from_millis(100));
-                    tokio::select! {
-                        result = rx.recv() => {
-                            match result {
-                                Some(packet) => {
-                                    self.remember_session_key_from_packet(&packet);
-                                    if let Some(meshtastic::protobufs::from_radio::PayloadVariant::Packet(mesh_packet)) = packet.payload_variant {
-                                        if mesh_packet.from == target_id {
-                                            if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(meshtastic::protobufs::Data { portnum, payload, .. })) = mesh_packet.payload_variant {
-                                                msnr_log!("Received packet from target on port {}: {:02X?}", portnum, payload);
-                                                if portnum == PortNum::AdminApp as i32 {
-                                                    if let Ok(admin_msg) = AdminMessage::decode(payload.as_slice()) {
-                                                        msnr_log!("AdminMessage Response: {:?}", admin_msg.payload_variant);
-                                                    }
+                let sleep = tokio::time::sleep(Duration::from_millis(100));
+                tokio::select! {
+                    result = rx.recv() => {
+                        match result {
+                            Some(packet) => {
+                                self.remember_session_key_from_packet(&packet);
+                                if let Some(meshtastic::protobufs::from_radio::PayloadVariant::Packet(mesh_packet)) = packet.payload_variant {
+                                    if mesh_packet.from == target_id {
+                                        if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(meshtastic::protobufs::Data { portnum, payload, .. })) = mesh_packet.payload_variant {
+                                            msnr_log!("Received packet from target on port {}: {:02X?}", portnum, payload);
+                                            if portnum == PortNum::AdminApp as i32 {
+                                                if let Ok(admin_msg) = AdminMessage::decode(payload.as_slice()) {
+                                                    msnr_log!("AdminMessage Response: {:?}", admin_msg.payload_variant);
                                                 }
                                             }
                                         }
                                     }
                                 }
-                                None => break,
                             }
+                            None => break,
                         }
-                        _ = sleep => {}
                     }
+                    _ = sleep => {}
                 }
+            }
 
-                msnr_log!("Verifying...");
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                self.send_admin_with_session(&target_node, &get_req).await?;
+            msnr_log!("Verifying...");
+            tokio::time::sleep(Duration::from_secs(2)).await;
 
-                let verify_start = Instant::now();
-                let mut verified = false;
+            let verify_result = self
+                .fetch_lora_config_once(rx, &target_node, target_id, &get_req)
+                .await;
 
-                loop {
-                    if verify_start.elapsed() > timeout {
+            let mut verified = false;
+            match verify_result {
+                Ok(config_lora) => {
+                    if config_lora.sx126x_rx_boosted_gain == enable {
                         msnr_log!(
-                            "WARNING: Verification Read Timed Out! (Attempt {})",
-                            attempt
+                            "✅ LNA Setting VERIFIED! (Current: {})",
+                            config_lora.sx126x_rx_boosted_gain
                         );
-                        break;
-                    }
-
-                    let sleep = tokio::time::sleep(Duration::from_millis(100));
-                    tokio::select! {
-                        result = rx.recv() => {
-                            match result {
-                                Some(packet) => {
-                                    self.remember_session_key_from_packet(&packet);
-                                    use meshtastic::protobufs::{Data, PortNum};
-                                    use meshtastic::protobufs::from_radio::PayloadVariant;
-
-                                    if let Some(PayloadVariant::Packet(mesh_packet)) = packet.payload_variant {
-                                        if mesh_packet.from == target_id {
-                                             if let Some(meshtastic::protobufs::mesh_packet::PayloadVariant::Decoded(Data { portnum, payload, .. })) = mesh_packet.payload_variant {
-                                                 if portnum == PortNum::AdminApp as i32 {
-                                                     if let Ok(admin_msg) = AdminMessage::decode(payload.as_slice()) {
-                                                         if let Some(admin_message::PayloadVariant::GetConfigResponse(config)) = admin_msg.payload_variant {
-                                                             if let Some(config::PayloadVariant::Lora(lora)) = config.payload_variant {
-                                                                 if lora.sx126x_rx_boosted_gain == enable {
-                                                                     msnr_log!("✅ LNA Setting VERIFIED! (Current: {})", lora.sx126x_rx_boosted_gain);
-                                                                     verified = true;
-                                                                 } else {
-                                                                     msnr_log!("❌ LNA Verification FAILED! (Expected: {}, Got: {})", enable, lora.sx126x_rx_boosted_gain);
-                                                                 }
-                                                                 break;
-                                                             }
-                                                         }
-                                                     }
-                                                 }
-                                             }
-                                        }
-                                    }
-                                }
-                                None => break,
-                            }
-                        }
-                        _ = sleep => {}
+                        verified = true;
+                    } else {
+                        msnr_log!(
+                            "❌ LNA Verification FAILED! (Expected: {}, Got: {})",
+                            enable,
+                            config_lora.sx126x_rx_boosted_gain
+                        );
                     }
                 }
-
-                if verified {
-                    success = true;
-                    break;
-                } else {
-                    msnr_log!("⚠️ Attempt {} failed. Retrying...", attempt);
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                Err(e) => {
+                    msnr_log!(
+                        "WARNING: Verification Read Timed Out! (Attempt {}) | {}",
+                        attempt,
+                        e
+                    );
                 }
             }
 
-            if !success {
-                let err_msg = format!(
-                    "CRITICAL ERROR: Failed to toggle LNA to {} after 10 attempts! Aborting test.",
-                    enable
-                );
-                msnr_log!("{}", err_msg);
-                return Err(anyhow::anyhow!(err_msg));
+            if verified {
+                success = true;
+                break;
+            } else {
+                msnr_log!("⚠️ Attempt {} failed. Retrying...", attempt);
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
+        }
+
+        if !success {
+            let err_msg = format!(
+                "CRITICAL ERROR: Failed to toggle LNA to {} after 10 attempts! Aborting test.",
+                enable
+            );
+            msnr_log!("{}", err_msg);
+            return Err(anyhow::anyhow!(err_msg));
         }
 
         Ok(())
@@ -684,6 +623,121 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    async fn fetch_lora_config_with_retry(
+        &mut self,
+        rx: &mut meshtastic::packet::PacketReceiver,
+        target_node: &str,
+        target_id: u32,
+        get_req: &AdminMessage,
+        attempts: u32,
+    ) -> Result<config::LoRaConfig> {
+        for attempt in 1..=attempts {
+            msnr_log!(
+                "Requesting LoRa Config from {}... (Attempt {}/{})",
+                target_node,
+                attempt,
+                attempts
+            );
+            match self
+                .fetch_lora_config_once(rx, target_node, target_id, get_req)
+                .await
+            {
+                Ok(lora) => return Ok(lora),
+                Err(e) => {
+                    if attempt == attempts {
+                        msnr_log!(
+                            "WARNING: Get Config failed after {} attempts for {}. {}",
+                            attempts,
+                            target_node,
+                            e
+                        );
+                        return Err(e);
+                    } else {
+                        msnr_log!(
+                            "Attempt {}/{} failed to fetch config ({}). Retrying...",
+                            attempt,
+                            attempts,
+                            e
+                        );
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "Unexpected failure while fetching LoRa config for {}",
+            target_node
+        ))
+    }
+
+    async fn fetch_lora_config_once(
+        &mut self,
+        rx: &mut meshtastic::packet::PacketReceiver,
+        target_node: &str,
+        target_id: u32,
+        get_req: &AdminMessage,
+    ) -> Result<config::LoRaConfig> {
+        self.send_admin_with_session(target_node, get_req).await?;
+        self.wait_for_lora_config_response(
+            rx,
+            target_id,
+            Duration::from_secs(LNA_WAIT_TIMEOUT_SECS),
+        )
+        .await
+    }
+
+    async fn wait_for_lora_config_response(
+        &mut self,
+        rx: &mut meshtastic::packet::PacketReceiver,
+        target_id: u32,
+        timeout: Duration,
+    ) -> Result<config::LoRaConfig> {
+        use meshtastic::protobufs::{Data, PortNum, from_radio::PayloadVariant, mesh_packet};
+
+        let wait_start = Instant::now();
+        loop {
+            if wait_start.elapsed() > timeout {
+                return Err(anyhow::anyhow!(format!(
+                    "Timed out waiting for LoRa config response after {} seconds",
+                    timeout.as_secs()
+                )));
+            }
+
+            let sleep = tokio::time::sleep(Duration::from_millis(100));
+            tokio::select! {
+                result = rx.recv() => {
+                    match result {
+                        Some(packet) => {
+                            self.remember_session_key_from_packet(&packet);
+                            if let Some(PayloadVariant::Packet(mesh_packet)) = packet.payload_variant {
+                                if mesh_packet.from == target_id {
+                                     if let Some(mesh_packet::PayloadVariant::Decoded(Data { portnum, payload, .. })) = mesh_packet.payload_variant {
+                                         if portnum == PortNum::AdminApp as i32 {
+                                             if let Ok(admin_msg) = AdminMessage::decode(payload.as_slice()) {
+                                                 if let Some(admin_message::PayloadVariant::GetConfigResponse(config)) = admin_msg.payload_variant {
+                                                     if let Some(config::PayloadVariant::Lora(lora)) = config.payload_variant {
+                                                         return Ok(lora);
+                                                     }
+                                                 }
+                                             }
+                                         }
+                                     }
+                                }
+                            }
+                        }
+                        None => {
+                            return Err(anyhow::anyhow!(
+                                "Transport channel closed while waiting for LoRa config response"
+                            ));
+                        }
+                    }
+                }
+                _ = sleep => {}
+            }
+        }
     }
 
     fn resolve_lna_control_node(&self) -> Option<String> {

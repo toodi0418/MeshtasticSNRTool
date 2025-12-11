@@ -140,3 +140,4 @@ npm run tauri dev
 - 2025-12-11：System Logs 若滾動條已在底部會自動跟隨最新訊息，使用者手動往上翻閱時則不強制跳動。
 - 2025-12-11：最新 macOS 版本（commit 52abe31 之後）已以 `npm run tauri build` 完成打包，輸出位於 `target/release/bundle/macos/app.app` 與 `target/release/bundle/dmg/app_0.1.0_x64.dmg`。
 - 2025-12-12：Relay 測試可於 CLI `--lna-target` 或 GUI 設定中指定 LNA 控制目標（不控制 / 頂樓 / 山上），核心 Engine 會依設定向對應節點送出切換命令。
+- 2025-12-12：LNA 切換流程的 `GetConfig` 與驗證都會重試 10 次，且單次等待拉長至 30 秒，避免高延遲鏈路造成過早失敗。
