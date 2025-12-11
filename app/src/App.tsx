@@ -4,7 +4,8 @@ import { listen } from '@tauri-apps/api/event';
 import './App.css';
 import { ConfigForm } from './components/ConfigForm';
 import { Dashboard } from './components/Dashboard';
-import { Config, ProgressState } from './types';
+import { ResultModal } from './components/ResultModal';
+import { Config, ProgressState, AverageStats } from './types';
 
 const createEmptyProgress = (): ProgressState => ({
   total_progress: 0,
@@ -39,11 +40,17 @@ function App() {
   const [progress, setProgress] = useState<ProgressState>(() => createEmptyProgress());
   const [logs, setLogs] = useState<string[]>([]);
   const [resetToken, setResetToken] = useState(0);
+  const [summaryStats, setSummaryStats] = useState<AverageStats | null>(null);
+  const [showSummary, setShowSummary] = useState(false);
   const resetProgress = () => setProgress(createEmptyProgress());
 
   useEffect(() => {
     const unlisten = listen<ProgressState>('test-progress', (event) => {
       setProgress(event.payload);
+      if (event.payload.phase === 'Done' && event.payload.average_stats) {
+        setSummaryStats(event.payload.average_stats);
+        setShowSummary(true);
+      }
     });
 
     const unlistenComplete = listen('test-complete', () => {
@@ -71,6 +78,8 @@ function App() {
     try {
       setResetToken((token) => token + 1);
       resetProgress();
+      setSummaryStats(null);
+      setShowSummary(false);
       await invoke('start_test', { config });
       setIsRunning(true);
       setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Test Started`]);
@@ -100,6 +109,9 @@ function App() {
         onStop={handleStop}
       />
       <Dashboard progress={progress} logs={logs} resetToken={resetToken} />
+      {showSummary && summaryStats && (
+        <ResultModal stats={summaryStats} onClose={() => setShowSummary(false)} />
+      )}
     </div>
   );
 }

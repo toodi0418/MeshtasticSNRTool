@@ -274,3 +274,59 @@ button:disabled {
 ::-webkit-scrollbar-thumb:hover {
   background: #475569;
 }
+
+/* Modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.result-modal {
+  width: min(520px, 90vw);
+  padding: 28px;
+  text-align: left;
+}
+
+.result-modal h2 {
+  margin-top: 0;
+  margin-bottom: 6px;
+}
+
+.modal-subtitle {
+  margin-top: 0;
+  margin-bottom: 18px;
+  color: var(--text-secondary);
+}
+
+.modal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.modal-grid h4 {
+  margin: 0 0 6px 0;
+}
+
+.delta-card {
+  grid-column: span 2;
+  padding: 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.modal-actions button {
+  margin: 0;
+  min-width: 120px;
+}
