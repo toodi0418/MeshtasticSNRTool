@@ -555,15 +555,32 @@ impl Engine {
                                                     match Self::validate_relay_route(&route_discovery.route, roof_id) {
                                                         Ok(RouteValidationOutcome::RoofOnly) => {
                                                             msnr_log!(
-                                                                "✅ VALIDATION PASS: Route reports single-hop via Roof({}), as required.",
-                                                                Self::format_node_id(Some(roof_id))
+                                                                "✅ VALIDATION PASS: Forward route hops: {}",
+                                                                Self::format_route(&route_discovery.route)
                                                             );
                                                         }
                                                         Err(reason) => {
                                                             msnr_log!(
-                                                                "❌ VALIDATION FAIL: {} | Route {}",
+                                                                "❌ VALIDATION FAIL (Forward): {} | Route {}",
                                                                 reason,
                                                                 Self::format_route(&route_discovery.route)
+                                                            );
+                                                            continue;
+                                                        }
+                                                    }
+
+                                                    match Self::validate_relay_return_route(&route_discovery.route_back, roof_id) {
+                                                        Ok(RouteValidationOutcome::RoofOnly) => {
+                                                            msnr_log!(
+                                                                "✅ VALIDATION PASS: Return route hops: {}",
+                                                                Self::format_route(&route_discovery.route_back)
+                                                            );
+                                                        }
+                                                        Err(reason) => {
+                                                            msnr_log!(
+                                                                "❌ VALIDATION FAIL (Return): {} | RouteBack {}",
+                                                                reason,
+                                                                Self::format_route(&route_discovery.route_back)
                                                             );
                                                             continue;
                                                         }
@@ -597,6 +614,7 @@ impl Engine {
                                                        cycle,
                                                         phase: phase_name.to_string(),
                                                         route: format!("{:?}", route_discovery.route),
+                                                        route_back: format!("{:?}", route_discovery.route_back),
                                                         snr_towards_1_room_roof: snr_towards.get(0).copied(),
                                                         snr_towards_2_roof_mtn: snr_towards.get(1).copied(),
                                                         snr_back_1_mtn_roof: snr_back.get(0).copied(),
@@ -776,6 +794,7 @@ struct TracerouteRecord {
     cycle: u32,
     phase: String,
     route: String,
+    route_back: String,
     snr_towards_1_room_roof: Option<f32>,
     snr_towards_2_roof_mtn: Option<f32>,
     snr_back_1_mtn_roof: Option<f32>,
@@ -859,6 +878,26 @@ impl Engine {
             return Err(format!(
                 "single-hop route {} does not match configured Roof {}",
                 Self::format_node_id(Some(hop)),
+                Self::format_node_id(Some(roof_id))
+            ));
+        }
+
+        Ok(RouteValidationOutcome::RoofOnly)
+    }
+
+    fn validate_relay_return_route(
+        route_back: &[u32],
+        roof_id: u32,
+    ) -> Result<RouteValidationOutcome, String> {
+        if route_back.is_empty() {
+            return Err("return route metadata is empty".to_string());
+        }
+
+        let first_hop = route_back[0];
+        if first_hop != roof_id {
+            return Err(format!(
+                "return route first hop {} does not match configured Roof {}",
+                Self::format_node_id(Some(first_hop)),
                 Self::format_node_id(Some(roof_id))
             ));
         }
