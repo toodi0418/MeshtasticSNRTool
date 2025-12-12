@@ -893,11 +893,20 @@ impl Engine {
             return Err("return route metadata is empty".to_string());
         }
 
-        let first_hop = route_back[0];
-        if first_hop != roof_id {
+        if route_back.len() != 1 {
             return Err(format!(
-                "return route first hop {} does not match configured Roof {}",
-                Self::format_node_id(Some(first_hop)),
+                "expected single-hop return route via Roof ({}) but received {} hop(s): {}",
+                Self::format_node_id(Some(roof_id)),
+                route_back.len(),
+                Self::format_route(route_back)
+            ));
+        }
+
+        let hop = route_back[0];
+        if hop != roof_id {
+            return Err(format!(
+                "return route hop {} does not match configured Roof {}",
+                Self::format_node_id(Some(hop)),
                 Self::format_node_id(Some(roof_id))
             ));
         }

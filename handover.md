@@ -142,4 +142,4 @@ npm run tauri dev
 - 2025-12-12：Relay 測試可於 CLI `--lna-target` 或 GUI 設定中指定 LNA 控制目標（不控制 / 頂樓 / 山上），核心 Engine 會依設定向對應節點送出切換命令。
 - 2025-12-12：LNA 切換流程的 `GetConfig` 與驗證都會重試 10 次，且單次等待拉長至 30 秒，避免高延遲鏈路造成過早失敗。
 - 2025-12-12：SNR 統計僅在實際取得 Roof↔Mountain 樣本時才累積計算，GUI 圖表亦與 CLI 相同條件顯示，避免缺值拉低平均或產生錯誤曲線。
-- 2025-12-12：Traceroute 會同時驗證去程 `route` 與回程 `route_back`，兩者都必須經過頂樓節點才計入樣本，CSV 也記錄雙向路由方便稽核。
+- 2025-12-12：Traceroute 會同時驗證去程 `route` 與回程 `route_back`，兩者都必須是單 hop 且經過頂樓節點才計入樣本，CSV 也記錄雙向路由方便稽核。
