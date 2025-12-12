@@ -17,13 +17,18 @@ export const Dashboard: React.FC<Props> = ({ progress, logs, resetToken }) => {
     useEffect(() => {
         const snrTowards = progress.snr_towards;
         const snrBack = progress.snr_back;
-        if (snrTowards && snrBack) {
+        if (
+            snrTowards &&
+            snrBack &&
+            snrTowards.length >= 2 &&
+            snrBack.length >= 2
+        ) {
             setHistory(prev => [
                 ...prev,
                 {
                     time: new Date().toLocaleTimeString('en-US', { hour12: false }),
-                    snr_towards: snrTowards[1] ?? 0, // Roof -> Mtn
-                    snr_back: snrBack[0] ?? 0,    // Mtn -> Roof
+                    snr_towards: snrTowards[1], // Roof -> Mtn
+                    snr_back: snrBack[0],    // Mtn -> Roof
                     phase: progress.phase || 'Unknown'
                 }
             ].slice(-50));

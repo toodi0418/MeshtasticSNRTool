@@ -51,37 +51,52 @@ impl AverageStats {
 }
 
 #[derive(Debug, Default)]
-struct PhaseStats {
+struct ChannelStats {
     samples: u32,
-    sum_roof_to_mtn: f32,
-    sum_mtn_to_roof: f32,
+    sum: f32,
+}
+
+impl ChannelStats {
+    fn add_sample(&mut self, value: f32) {
+        self.sum += value;
+        self.samples += 1;
+    }
+
+    fn average(&self) -> Option<f32> {
+        if self.samples == 0 {
+            None
+        } else {
+            Some(self.sum / self.samples as f32)
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct PhaseStats {
+    roof_to_mtn: ChannelStats,
+    mtn_to_roof: ChannelStats,
 }
 
 impl PhaseStats {
     fn add_sample(&mut self, roof_to_mtn: Option<f32>, mtn_to_roof: Option<f32>) {
         if let Some(val) = roof_to_mtn {
-            self.sum_roof_to_mtn += val;
+            self.roof_to_mtn.add_sample(val);
         }
         if let Some(val) = mtn_to_roof {
-            self.sum_mtn_to_roof += val;
+            self.mtn_to_roof.add_sample(val);
         }
-        self.samples += 1;
     }
 
     fn average_roof_to_mtn(&self) -> Option<f32> {
-        if self.samples == 0 {
-            None
-        } else {
-            Some(self.sum_roof_to_mtn / self.samples as f32)
-        }
+        self.roof_to_mtn.average()
     }
 
     fn average_mtn_to_roof(&self) -> Option<f32> {
-        if self.samples == 0 {
-            None
-        } else {
-            Some(self.sum_mtn_to_roof / self.samples as f32)
-        }
+        self.mtn_to_roof.average()
+    }
+
+    fn count_roof_to_mtn(&self) -> u32 {
+        self.roof_to_mtn.samples
     }
 }
 
@@ -816,10 +831,10 @@ impl Engine {
 
     fn current_average_stats(&self) -> AverageStats {
         AverageStats {
-            lna_off_samples: self.stats_lna_off.samples,
+            lna_off_samples: self.stats_lna_off.count_roof_to_mtn(),
             lna_off_roof_to_mtn: self.stats_lna_off.average_roof_to_mtn(),
             lna_off_mtn_to_roof: self.stats_lna_off.average_mtn_to_roof(),
-            lna_on_samples: self.stats_lna_on.samples,
+            lna_on_samples: self.stats_lna_on.count_roof_to_mtn(),
             lna_on_roof_to_mtn: self.stats_lna_on.average_roof_to_mtn(),
             lna_on_mtn_to_roof: self.stats_lna_on.average_mtn_to_roof(),
         }
